@@ -408,8 +408,8 @@ struct TimerScreen: View {
     
     func scheduleCompletionNotification() {
         let content = UNMutableNotificationContent()
-        content.title = isStudy ? "Break Timer Done!" : "Study Timer Done!"
-        content.body = isStudy ? "Time to study!" : "Time to rest!"
+        content.title = isStudy ? "Study Timer Done!"  : "Break Timer Done!"
+        content.body = isStudy ? "Time to rest!" : "Time to study!"
         content.sound = .default
         
         
