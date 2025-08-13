@@ -7,34 +7,67 @@
 
 import SwiftUI
 internal import Combine
-
+import AVFoundation
+import UserNotifications
 
 struct LogoScreen: View {
     @State private var isVisible = true
+    @State private var jumpUp = false
+    
     var body: some View {
         ZStack {
             if isVisible {
-                Color(red: 245/255, green: 245/255, blue: 245/255)
+                LinearGradient(colors: [.white, .orange], startPoint: .top, endPoint: .bottom)
                     .ignoresSafeArea()
                 VStack {
-                    Image("logo")
-                        .resizable()
-                        .scaledToFit()
-                        .cornerRadius(12)
-                        .onAppear {
-                            // Hide after 3 seconds
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                                withAnimation {
-                                    isVisible = false
+                    HStack {
+                        Image("logo2")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(minWidth: 90, maxWidth:120 )
+                            .cornerRadius(12)
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white, lineWidth: 6)
+                            )
+                            .offset(y: jumpUp ? -20 : 0)
+                            .animation(.easeInOut(duration: 0.3), value: jumpUp)
+                            .onAppear {
+                                // Trigger the jump up
+                                jumpUp = true
+                                // After jump up animation finishes, jump back down
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    jumpUp = false
+                                }
+                                // Hide after 3 seconds as before
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                    withAnimation {
+                                        isVisible = false
+                                    }
                                 }
                             }
-                        }
-                        .transition(.opacity) // Fade-out animation
+                            .transition(.opacity)
+                        
+                        Image("odoro")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 250)
+                            .padding(.leading)
+                            
+                    }
+                    
+                    .padding(.top ,100)
+                    
+                    
                     Text("Your study buddy")
+                        .padding(.top, 100)
+                    
                         .font(.headline).bold()
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(.regularMaterial)
                 }
             }
+            
         }
     }
 }
@@ -43,38 +76,116 @@ struct PickerScreen: View {
     @Binding var studyTime: Int
     @Binding var restTime: Int
     @Binding var choicesMade: Bool
+    
+    @State private var showImage = false
+    @State private var showPickers = false
+    @State private var showButton = false
+    
     var body: some View {
         VStack {
+            // Logo Image
+            Image("logo2")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 45, height: 45)
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white, lineWidth: 3)
+                )
+                .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
+                .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
+            
             if !choicesMade {
+                // Pickers section
                 HStack {
-                    
                     VStack {
                         Text("Study Time")
+                            .font(.title).bold()
+                        
                         Picker("Study Time", selection: $studyTime) {
-                            ForEach(1..<60, id: \.self) { num in
+                            ForEach(1...60, id: \.self) { num in
                                 Text("\(num) min")
+                                    .foregroundStyle(.white).bold()
                             }
                         }
+                        .frame(maxWidth: 350)
+                        .shadow(radius: 20)
+                        .pickerStyle(.wheel)
+                        .background(.purple.opacity(0.7))
+                        .cornerRadius(30)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 30)
+                                .stroke(Color.white, lineWidth: 3)
+                        )
                     }
-                    .pickerStyle(.wheel)
+                    .padding(.horizontal)
+                    
                     VStack {
                         Text("Rest Time")
+                            .font(.title).bold()
+                        
                         Picker("Rest Time", selection: $restTime) {
-                            ForEach(1..<60, id: \.self) { num in
+                            ForEach(1...60, id: \.self) { num in
                                 Text("\(num) min")
+                                    .foregroundStyle(.white).bold()
                             }
                         }
+                        .frame(maxWidth: 350)
+                        .shadow(radius: 20)
                         .pickerStyle(.wheel)
+                        .background(.orange.opacity(0.7))
+                        .cornerRadius(30)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 30)
+                                .stroke(Color.white, lineWidth: 3)
+                        )
                     }
+                    .padding(.horizontal)
                 }
-                Button("Choose") {
+                .offset(y: showPickers ? 0 : UIScreen.main.bounds.height)
+                .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showPickers)
+                
+                // Done button
+                Button("Done") {
                     choicesMade = true
                 }
+                .frame(width: 75, height: 30)
+                .foregroundStyle(.white)
+                .background(.blue.opacity(0.7))
+                .clipShape(.capsule)
+                .shadow(radius: 20)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 30)
+                        .stroke(Color.white, lineWidth: 3)
+                )
+                .offset(y: showButton ? 0 : UIScreen.main.bounds.height)
+                .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.2), value: showButton)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(.white)
+        .background(
+            LinearGradient(colors: [.pink.opacity(0.4), .pink.opacity(0.7)],
+                           startPoint: .top,
+                           endPoint: .bottom)
+        )
+        .ignoresSafeArea()
+        .onAppear {
+            // Animate all elements sequentially
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                showImage = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                showPickers = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                showButton = true
             }
         }
     }
 }
-
+ 
 
 struct TimerScreen: View {
     @Binding var studyTime: Int
@@ -85,6 +196,7 @@ struct TimerScreen: View {
     @State private var timerRunning = false
     
     @State private var dragging = false
+    @State private var audioPlayer: AVAudioPlayer?
     
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
@@ -106,39 +218,45 @@ struct TimerScreen: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Color.gray.opacity(0.3)
+                isStudy ?
+                Color.green.opacity(0.3)
                     .ignoresSafeArea()
-
+                :
+                Color.orange.opacity(0.7)
                 
-                (isStudy ? Color.purple : Color.orange)
-//                    .frame(width: geo.size.width * progress)
-                    .frame(width: UIScreen.main.bounds.width * progress)
                     .ignoresSafeArea()
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { value in
-                                dragging = true
-                                let geoWidth = geo.size.width
-                                let locationX = min(max(value.location.x, 0), geoWidth)
-                                let invertedX = geoWidth - locationX
-                                let newProgress = invertedX / geoWidth
-                                
-                                let newSeconds = Int(newProgress * CGFloat(totalSeconds))
-                                let clampedSeconds = max( isStudy ? studyTime : restTime, newSeconds)
-                                let newMinutes = max(isStudy ? studyTime : restTime, Int(ceil(Double(clampedSeconds) / 60.0)))
-                                
-                                if isStudy {
-                                    studyTime = newMinutes
-                                    secondsLeft = clampedSeconds
-                                } else {
-                                    restTime = newMinutes
-                                    secondsLeft = clampedSeconds
-                                }
+                
+                (isStudy ? LinearGradient(colors: [Color.purple.opacity(0.7), Color.purple.opacity(1)], startPoint: .leading, endPoint: .trailing)
+                 : LinearGradient(colors: [Color.red.opacity(0.7),Color.red.opacity(1)], startPoint: .leading, endPoint: .trailing))
+                
+                
+                .frame(width: UIScreen.main.bounds.width * progress)
+                .ignoresSafeArea()
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            dragging = true
+                            let geoWidth = geo.size.width
+                            let locationX = min(max(value.location.x, 0), geoWidth)
+                            let invertedX = geoWidth - locationX
+                            let newProgress = invertedX / geoWidth
+                            
+                            let newSeconds = Int(newProgress * CGFloat(totalSeconds))
+                            let clampedSeconds = max( isStudy ? studyTime : restTime, newSeconds)
+                            let newMinutes = max(isStudy ? studyTime : restTime, Int(ceil(Double(clampedSeconds) / 60.0)))
+                            
+                            if isStudy {
+                                studyTime = newMinutes
+                                secondsLeft = clampedSeconds
+                            } else {
+                                restTime = newMinutes
+                                secondsLeft = clampedSeconds
                             }
-                            .onEnded { _ in
-                                dragging = false
-                            }
-                    )
+                        }
+                        .onEnded { _ in
+                            dragging = false
+                        }
+                )
             }
             VStack(spacing: 40) {
                 VStack(spacing: 40) {
@@ -146,6 +264,7 @@ struct TimerScreen: View {
                         .font(.largeTitle)
                         .bold()
                         .foregroundColor(.white)
+                        
                     
                     Text(timeString(from: secondsLeft))
                         .font(.system(size: 80, weight: .bold, design: .monospaced))
@@ -156,20 +275,30 @@ struct TimerScreen: View {
                         Button(timerRunning ? "Pause" : "Start") {
                             timerRunning.toggle()
                         }
-                        .font(.title2)
+                        .font(.title2).bold()
                         .padding()
                         .background(Color.white.opacity(0.3))
                         .foregroundColor(.white)
                         .clipShape(Capsule())
+                        .cornerRadius(30)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 30)
+                                .stroke(Color.white, lineWidth: 3)
+                        )
                         
                         Button("Reset") {
                             resetTimer()
                         }
-                        .font(.title2)
+                        .font(.title2).bold()
                         .padding()
                         .background(Color.white.opacity(0.3))
                         .foregroundColor(.white)
                         .clipShape(Capsule())
+                        .cornerRadius(30)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 30)
+                                .stroke(Color.white, lineWidth: 3)
+                        )
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -181,6 +310,7 @@ struct TimerScreen: View {
                 if secondsLeft > 0 {
                     secondsLeft -= 1
                 } else {
+                    playDingSound()
                     isStudy.toggle()
                     secondsLeft = (isStudy ? studyTime : restTime) * 60
                 }
@@ -199,11 +329,25 @@ struct TimerScreen: View {
         let s = seconds % 60
         return String(format: "%02d:%02d", m, s)
     }
+    
+    func playDingSound() {
+        guard let url = Bundle.main.url(forResource: "ding", withExtension: "mp3") else {
+            print("Ding sound file not found")
+            return
+        }
+        
+        do {
+            audioPlayer = try AVAudioPlayer(contentsOf: url)
+            audioPlayer?.play()
+        } catch {
+            print("Error playing ding sound: \(error.localizedDescription)")
+        }
+    }
 }
 
 struct ContentView: View {
-    @State private var studyTime = 0
-    @State private var restTime = 0
+    @State private var studyTime = 1
+    @State private var restTime = 1
     @State private var choicesMade = false
     var body: some View {
         NavigationStack {
@@ -211,8 +355,8 @@ struct ContentView: View {
                 if !choicesMade {
                     PickerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade)
                 }
-                    LogoScreen()
-
+                LogoScreen()
+                
                 
                 if choicesMade {
                     HStack {
@@ -227,6 +371,15 @@ struct ContentView: View {
                     
                 }
                 
+            }
+        }
+    }
+    func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+            if granted {
+                print("Notifications allowed")
+            } else if let error = error {
+                print("Error requesting notifications: \(error)")
             }
         }
     }
