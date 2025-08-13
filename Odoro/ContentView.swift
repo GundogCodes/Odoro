@@ -8,6 +8,7 @@
 import SwiftUI
 internal import Combine
 
+
 struct LogoScreen: View {
     @State private var isVisible = true
     var body: some View {
@@ -139,7 +140,7 @@ struct TimerScreen: View {
                             }
                     )
             }
-            .overlay(
+            VStack(spacing: 40) {
                 VStack(spacing: 40) {
                     Text(isStudy ? "Study Time" : "Rest Time")
                         .font(.largeTitle)
@@ -171,9 +172,9 @@ struct TimerScreen: View {
                         .clipShape(Capsule())
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center) 
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 .padding()
-            )
+            }
             .onReceive(timer) { _ in
                 guard timerRunning else { return }
                 
