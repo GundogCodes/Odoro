@@ -11,63 +11,56 @@ import AVFoundation
 import UserNotifications
 
 struct LogoScreen: View {
-    @State private var isVisible = true
+    @Binding var isFinished: Bool
     @State private var jumpUp = false
-    
+
     var body: some View {
         ZStack {
-            if isVisible {
-                LinearGradient(colors: [.white, .orange], startPoint: .top, endPoint: .bottom)
-                    .ignoresSafeArea()
-                VStack {
-                    HStack {
-                        Image("logo2")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(minWidth: 90, maxWidth:120 )
-                            .cornerRadius(12)
-                            .cornerRadius(10)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.white, lineWidth: 6)
-                            )
-                            .offset(y: jumpUp ? -20 : 0)
-                            .animation(.easeInOut(duration: 0.3), value: jumpUp)
-                            .onAppear {
-                                // Trigger the jump up
-                                jumpUp = true
-                                // After jump up animation finishes, jump back down
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    jumpUp = false
-                                }
-                                // Hide after 3 seconds as before
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                                    withAnimation {
-                                        isVisible = false
-                                    }
-                                }
-                            }
-                            .transition(.opacity)
-                        
-                        Image("odoro")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 250)
-                            .padding(.leading)
+            LinearGradient(colors: [.white, .orange], startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+
+            VStack {
+                HStack {
+                    Image("logo2")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(minWidth: 90, maxWidth:120 )
+                        .cornerRadius(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white, lineWidth: 6)
+                        )
+                        .offset(y: jumpUp ? -20 : 0)
+                        .animation(.easeInOut(duration: 0.3), value: jumpUp)
+                        .onAppear {
+                            // jump up animation
+                            jumpUp = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { jumpUp = false }
                             
-                    }
-                    
-                    .padding(.top ,100)
-                    
-                    
-                    Text("Your study buddy")
-                        .padding(.top, 100)
-                    
-                        .font(.headline).bold()
-                        .foregroundStyle(.regularMaterial)
+                            // Wait 1 second before finishing logo
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                // update binding outside animation
+                                isFinished = false  // Changed to false to hide logo screen
+                                
+                                // Increment logo view count
+                                let currentCount = UserDefaults.standard.integer(forKey: "logoViewCount")
+                                UserDefaults.standard.set(currentCount + 1, forKey: "logoViewCount")
+                            }
+                        }
+
+                    Image("odoro")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 250)
+                        .padding(.leading)
                 }
+                .padding(.top ,100)
+
+                Text("Your study buddy")
+                    .padding(.top, 100)
+                    .font(.headline).bold()
+                    .foregroundStyle(.regularMaterial)
             }
-            
         }
     }
 }
@@ -185,7 +178,6 @@ struct PickerScreen: View {
         }
     }
 }
- 
 
 struct TimerScreen: View {
     @Binding var studyTime: Int
@@ -194,6 +186,10 @@ struct TimerScreen: View {
     @State private var isStudy = true
     @State private var secondsLeft: Int
     @State private var timerRunning = false
+    
+    // Background handling
+    @State private var timerStartTime: Date?
+    @State private var backgroundTime: Date?
     
     @State private var dragging = false
     @State private var audioPlayer: AVAudioPlayer?
@@ -223,13 +219,10 @@ struct TimerScreen: View {
                     .ignoresSafeArea()
                 :
                 Color.orange.opacity(0.7)
-                
                     .ignoresSafeArea()
                 
                 (isStudy ? LinearGradient(colors: [Color.purple.opacity(0.7), Color.purple.opacity(1)], startPoint: .leading, endPoint: .trailing)
                  : LinearGradient(colors: [Color.red.opacity(0.7),Color.red.opacity(1)], startPoint: .leading, endPoint: .trailing))
-                
-                
                 .frame(width: UIScreen.main.bounds.width * progress)
                 .ignoresSafeArea()
                 .gesture(
@@ -264,7 +257,6 @@ struct TimerScreen: View {
                         .font(.largeTitle)
                         .bold()
                         .foregroundColor(.white)
-                        
                     
                     Text(timeString(from: secondsLeft))
                         .font(.system(size: 80, weight: .bold, design: .monospaced))
@@ -273,7 +265,7 @@ struct TimerScreen: View {
                     
                     HStack(spacing: 40) {
                         Button(timerRunning ? "Pause" : "Start") {
-                            timerRunning.toggle()
+                            toggleTimer()
                         }
                         .font(.title2).bold()
                         .padding()
@@ -304,24 +296,137 @@ struct TimerScreen: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 .padding()
             }
-            .onReceive(timer) { _ in
-                guard timerRunning else { return }
-                
-                if secondsLeft > 0 {
-                    secondsLeft -= 1
-                } else {
-                    playDingSound()
-                    isStudy.toggle()
-                    secondsLeft = (isStudy ? studyTime : restTime) * 60
-                }
+        }
+        .onReceive(timer) { _ in
+            guard timerRunning else { return }
+            
+            if secondsLeft > 0 {
+                secondsLeft -= 1
+            } else {
+                timerCompleted()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            updateTimerFromBackground()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            if timerRunning {
+                backgroundTime = Date()
             }
         }
     }
     
+    func toggleTimer() {
+        timerRunning.toggle()
+        
+        if timerRunning {
+            timerStartTime = Date()
+            scheduleTimerEndNotification()
+        } else {
+            cancelScheduledNotifications()
+            timerStartTime = nil
+        }
+    }
+    
     func resetTimer() {
+        timerRunning = false
         isStudy = true
         secondsLeft = studyTime * 60
-        timerRunning = false
+        timerStartTime = nil
+        backgroundTime = nil
+        cancelScheduledNotifications()
+    }
+    
+    func timerCompleted() {
+        playDingSound()
+        
+        // Cancel the timer end notification since timer completed
+        cancelScheduledNotifications()
+        
+        // Send immediate completion notification
+        scheduleCompletionNotification()
+        
+        // Switch modes
+        isStudy.toggle()
+        secondsLeft = (isStudy ? studyTime : restTime) * 60
+        
+        // Keep timer running for next phase and schedule new notification
+        if timerRunning {
+            timerStartTime = Date()
+            scheduleTimerEndNotification()
+        }
+    }
+    
+    func updateTimerFromBackground() {
+        guard let backgroundTime = backgroundTime, timerRunning else { return }
+        
+        let timeElapsed = Date().timeIntervalSince(backgroundTime)
+        let secondsElapsed = Int(timeElapsed)
+        
+        if secondsElapsed >= secondsLeft {
+            // Timer should have completed (possibly multiple times)
+            var remainingElapsed = secondsElapsed
+            
+            while remainingElapsed >= secondsLeft {
+                remainingElapsed -= secondsLeft
+                timerCompleted()
+            }
+            
+            // Handle any remaining time
+            secondsLeft -= remainingElapsed
+        } else {
+            // Update remaining time
+            secondsLeft -= secondsElapsed
+        }
+        
+        self.backgroundTime = nil
+    }
+    
+    func scheduleTimerEndNotification() {
+        // Cancel any existing notifications
+        cancelScheduledNotifications()
+        
+        guard secondsLeft > 0 else { return }
+        
+        let content = UNMutableNotificationContent()
+        content.title = isStudy ? "Study Time Complete!" : "Break Time Complete!"
+        content.body = isStudy ? "Time for a break!" : "Time to study!"
+        content.sound = .default
+        
+        
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(secondsLeft), repeats: false)
+        let request = UNNotificationRequest(identifier: "timer_end", content: content, trigger: trigger)
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Error scheduling timer end notification: \(error)")
+            } else {
+                print("✅ Scheduled notification for \(secondsLeft) seconds")
+            }
+        }
+    }
+    
+    func scheduleCompletionNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = isStudy ? "Break Timer Done!" : "Study Timer Done!"
+        content.body = isStudy ? "Time to study!" : "Time to rest!"
+        content.sound = .default
+        
+        
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+        let request = UNNotificationRequest(identifier: "timer_completed_\(UUID().uuidString)", content: content, trigger: trigger)
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Error scheduling completion notification: \(error)")
+            } else {
+                print("✅ Scheduled completion notification")
+            }
+        }
+    }
+    
+    func cancelScheduledNotifications() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["timer_end", "timer_completed"])
     }
     
     func timeString(from seconds: Int) -> String {
@@ -346,40 +451,42 @@ struct TimerScreen: View {
 }
 
 struct ContentView: View {
-    @State private var studyTime = 1
-    @State private var restTime = 1
+    @State private var studyTime = 25
+    @State private var restTime = 5
     @State private var choicesMade = false
+    @State private var showLogoScreen = false
+
+    init() {
+        let logoViewCount = UserDefaults.standard.integer(forKey: "logoViewCount")
+        _showLogoScreen = State(initialValue: logoViewCount < 2)
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
-                if !choicesMade {
+                if showLogoScreen {
+                    LogoScreen(isFinished: $showLogoScreen)
+                } else if !choicesMade {
                     PickerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade)
-                }
-                LogoScreen()
-                
-                
-                if choicesMade {
-                    HStack {
-                        TimerScreen(studyTime: $studyTime, restTime: $restTime)
-                    }
-                    .toolbar {
-                        Button("", systemImage:"xmark") {
-                            choicesMade = false
+                } else {
+                    TimerScreen(studyTime: $studyTime, restTime: $restTime)
+                        .toolbar {
+                            Button("", systemImage:"xmark") { choicesMade = false }
                         }
-                        
-                    }
-                    
                 }
-                
             }
         }
+        .onAppear {
+            requestNotificationPermission()
+        }
     }
+
     func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if granted {
                 print("Notifications allowed")
             } else if let error = error {
-                print("Error requesting notifications: \(error)")
+                print("Error requesting notifications: \(error.localizedDescription)")
             }
         }
     }
