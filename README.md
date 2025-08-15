@@ -30,3 +30,5 @@ With a clean UI, smooth animations, and local notifications, Odoro keeps you on 
    ```bash
    git clone https://github.com/GundogCodes/odoro.git
    cd odoro
+## Privacy policy
+https://gundogcodes.github.io/odoro-privacy-policy/ 
