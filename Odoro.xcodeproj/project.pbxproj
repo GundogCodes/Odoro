@@ -254,6 +254,8 @@
 				DEVELOPMENT_TEAM = 9K4HZ244L6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "<key>NSPhotoLibraryAddUsageDescription</key>\n<string>Odoro needs photo library access to save your study timelapse videos.</string>";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "<key>NSCameraUsageDescription</key>\n<string>Odoro needs camera access to create a timelapse of your study session.</string>\n";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -286,6 +288,8 @@
 				DEVELOPMENT_TEAM = 9K4HZ244L6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "<key>NSPhotoLibraryAddUsageDescription</key>\n<string>Odoro needs photo library access to save your study timelapse videos.</string>";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "<key>NSCameraUsageDescription</key>\n<string>Odoro needs camera access to create a timelapse of your study session.</string>\n";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
