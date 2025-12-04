@@ -10,9 +10,22 @@
 		35529FB22E46A8D4002EC013 /* Odoro.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Odoro.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		1F1D61C12EE086A500141CC7 /* Exceptions for "Odoro" folder in "Odoro" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 35529FB12E46A8D4002EC013 /* Odoro */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		35529FB42E46A8D4002EC013 /* Odoro */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				1F1D61C12EE086A500141CC7 /* Exceptions for "Odoro" folder in "Odoro" target */,
+			);
 			path = Odoro;
 			sourceTree = "<group>";
 		};
@@ -254,7 +267,9 @@
 				DEVELOPMENT_TEAM = 9K4HZ244L6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Odoro/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "<key>NSPhotoLibraryAddUsageDescription</key>\n<string>Odoro needs photo library access to save your study timelapse videos.</string>";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Odoro uses motion to create a fluid animation effect for the timer.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "<key>NSCameraUsageDescription</key>\n<string>Odoro needs camera access to create a timelapse of your study session.</string>\n";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -288,7 +303,9 @@
 				DEVELOPMENT_TEAM = 9K4HZ244L6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Odoro/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "<key>NSPhotoLibraryAddUsageDescription</key>\n<string>Odoro needs photo library access to save your study timelapse videos.</string>";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Odoro uses motion to create a fluid animation effect for the timer.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "<key>NSCameraUsageDescription</key>\n<string>Odoro needs camera access to create a timelapse of your study session.</string>\n";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
