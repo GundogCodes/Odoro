@@ -1310,6 +1310,203 @@ struct LogoScreen: View {
     }
 }
 
+// MARK: - Animated Mesh Background
+struct AnimatedMeshBackground: View {
+    @Environment(\.colorScheme) var colorScheme
+    
+    // Randomized on each load
+    @State private var wave1FromTop: Bool = false
+    @State private var wave2FromTop: Bool = true
+    @State private var wave3FromTop: Bool = false
+    @State private var speedMultiplier1: Double = 1.0
+    @State private var speedMultiplier2: Double = 1.0
+    @State private var speedMultiplier3: Double = 1.0
+    @State private var initialized = false
+    
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            
+            GeometryReader { geo in
+                ZStack {
+                    if colorScheme == .dark {
+                        // Solid dark cyan base
+                        Color(red: 0.0, green: 0.45, blue: 0.4)
+                        
+                        // Wave 1 - brighter green
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave1FromTop,
+                            baseHeight: 0.65,
+                            amplitude: 50,
+                            frequency: 1.0,
+                            speed: 0.6 * speedMultiplier1,
+                            color: Color(red: 0.0, green: 0.7, blue: 0.5)
+                        )
+                        
+                        // Wave 2 - mint
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave2FromTop,
+                            baseHeight: 0.55,
+                            amplitude: 45,
+                            frequency: 1.2,
+                            speed: 0.8 * speedMultiplier2,
+                            color: Color(red: 0.1, green: 0.85, blue: 0.65)
+                        )
+                        
+                        // Wave 3 - neon green
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave3FromTop,
+                            baseHeight: 0.4,
+                            amplitude: 40,
+                            frequency: 1.4,
+                            speed: 1.0 * speedMultiplier3,
+                            color: Color(red: 0.2, green: 0.95, blue: 0.6)
+                        )
+                        
+                    } else {
+                        // Solid yellow base
+                        Color(red: 1.0, green: 0.75, blue: 0.3)
+                        
+                        // Wave 1 - orange
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave1FromTop,
+                            baseHeight: 0.7,
+                            amplitude: 55,
+                            frequency: 0.9,
+                            speed: 0.55 * speedMultiplier1,
+                            color: Color(red: 1.0, green: 0.55, blue: 0.3)
+                        )
+                        
+                        // Wave 2 - coral/pink
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave2FromTop,
+                            baseHeight: 0.6,
+                            amplitude: 50,
+                            frequency: 1.1,
+                            speed: 0.75 * speedMultiplier2,
+                            color: Color(red: 1.0, green: 0.45, blue: 0.4)
+                        )
+                        
+                        // Wave 3 - hot pink
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave3FromTop,
+                            baseHeight: 0.35,
+                            amplitude: 45,
+                            frequency: 1.3,
+                            speed: 0.9 * speedMultiplier3,
+                            color: Color(red: 1.0, green: 0.35, blue: 0.5)
+                        )
+                    }
+                }
+                .drawingGroup()
+            }
+        }
+        .onAppear {
+            // Randomize directions and speeds each time screen loads
+            wave1FromTop = Bool.random()
+            wave2FromTop = Bool.random()
+            wave3FromTop = Bool.random()
+            
+            // Subtle speed variations (0.8 to 1.2, some negative for reverse flow)
+            speedMultiplier1 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
+            speedMultiplier2 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
+            speedMultiplier3 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+// Simple horizontal fluid wave (top or bottom)
+struct HorizontalFluidWave: View {
+    let time: Double
+    let fromTop: Bool
+    let baseHeight: CGFloat
+    let amplitude: CGFloat
+    let frequency: CGFloat
+    let speed: CGFloat
+    let color: Color
+    
+    var body: some View {
+        GeometryReader { geo in
+            HorizontalFluidShape(
+                time: time,
+                fromTop: fromTop,
+                baseHeight: baseHeight,
+                amplitude: amplitude,
+                frequency: frequency,
+                speed: speed
+            )
+            .fill(color)
+        }
+    }
+}
+
+struct HorizontalFluidShape: Shape {
+    var time: Double
+    var fromTop: Bool
+    var baseHeight: CGFloat
+    var amplitude: CGFloat
+    var frequency: CGFloat
+    var speed: CGFloat
+    
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let steps = 80
+        
+        if fromTop {
+            // Wave coming from top
+            let waveY = rect.height * baseHeight
+            
+            path.move(to: CGPoint(x: 0, y: 0))
+            path.addLine(to: CGPoint(x: rect.width, y: 0))
+            
+            // Wavy bottom edge
+            for i in (0...steps).reversed() {
+                let x = (CGFloat(i) / CGFloat(steps)) * rect.width
+                let normalizedX = x / rect.width
+                
+                let wave1 = sin((normalizedX * .pi * 2 * frequency) + (time * speed)) * amplitude
+                let wave2 = sin((normalizedX * .pi * 3.5 * frequency) + (time * speed * 1.3)) * (amplitude * 0.3)
+                let wave3 = cos((normalizedX * .pi * 1.5 * frequency) + (time * speed * 0.7)) * (amplitude * 0.2)
+                
+                let y = waveY + wave1 + wave2 + wave3
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+            
+            path.closeSubpath()
+        } else {
+            // Wave coming from bottom
+            let waveY = rect.height * (1 - baseHeight)
+            
+            path.move(to: CGPoint(x: 0, y: rect.height))
+            
+            // Wavy top edge
+            for i in 0...steps {
+                let x = (CGFloat(i) / CGFloat(steps)) * rect.width
+                let normalizedX = x / rect.width
+                
+                let wave1 = sin((normalizedX * .pi * 2 * frequency) + (time * speed)) * amplitude
+                let wave2 = sin((normalizedX * .pi * 3.5 * frequency) + (time * speed * 1.3)) * (amplitude * 0.3)
+                let wave3 = cos((normalizedX * .pi * 1.5 * frequency) + (time * speed * 0.7)) * (amplitude * 0.2)
+                
+                let y = waveY + wave1 + wave2 + wave3
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+            
+            path.addLine(to: CGPoint(x: rect.width, y: rect.height))
+            path.closeSubpath()
+        }
+        
+        return path
+    }
+}
+
 // MARK: - Picker Screen
 struct PickerScreen: View {
     @Binding var studyTime: Int
@@ -1324,60 +1521,59 @@ struct PickerScreen: View {
     @State private var showStats = false
     
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 20) {
-                Image("logo2")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 45, height: 45)
-                    .cornerRadius(10)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.white, lineWidth: 3)
-                    )
-                    .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
-                    .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
-                
-                if !choicesMade {
-                    HStack {
-                        VStack {
-                            Text("Lock In Time")
-                                .font(.title).bold()
-                            
-                            Picker("Lock In Time", selection: $studyTime) {
-                                ForEach(1...60, id: \.self) { num in
-                                    Text("\(num) min").foregroundStyle(.white).bold()
-                                }
-                            }
-                            .frame(maxWidth: 350)
-                            .shadow(radius: 20)
-                            .pickerStyle(.wheel)
-                            .background(settings.studyColor.opacity(0.7))
-                            .cornerRadius(30)
-                            .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white, lineWidth: 3))
-                        }
-                        .padding(.horizontal)
+        VStack(spacing: 20) {
+            Image("logo2")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 45, height: 45)
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white, lineWidth: 3)
+                )
+                .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
+                .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
+            
+            if !choicesMade {
+                HStack {
+                    VStack {
+                        Text("Lock In Time")
+                            .font(.title).bold()
                         
-                        VStack {
-                            Text("Chill Time")
-                                .font(.title).bold()
-                            
-                            Picker("Chill Time", selection: $restTime) {
-                                ForEach(1...60, id: \.self) { num in
-                                    Text("\(num) min").foregroundStyle(.white).bold()
-                                }
+                        Picker("Lock In Time", selection: $studyTime) {
+                            ForEach(1...60, id: \.self) { num in
+                                Text("\(num) min").foregroundStyle(.white).bold()
                             }
-                            .frame(maxWidth: 350)
-                            .shadow(radius: 20)
-                            .pickerStyle(.wheel)
-                            .background(settings.restColor.opacity(0.7))
-                            .cornerRadius(30)
-                            .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white, lineWidth: 3))
                         }
-                        .padding(.horizontal)
+                        .frame(maxWidth: 350)
+                        .shadow(radius: 20)
+                        .pickerStyle(.wheel)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(30)
+                        .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
                     }
-                    .offset(y: showPickers ? 0 : UIScreen.main.bounds.height)
-                    .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showPickers)
+                    .padding(.horizontal)
+                    
+                    VStack {
+                        Text("Chill Time")
+                            .font(.title).bold()
+                        
+                        Picker("Chill Time", selection: $restTime) {
+                            ForEach(1...60, id: \.self) { num in
+                                Text("\(num) min").foregroundStyle(.white).bold()
+                            }
+                        }
+                        .frame(maxWidth: 350)
+                        .shadow(radius: 20)
+                        .pickerStyle(.wheel)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(30)
+                        .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
+                    }
+                    .padding(.horizontal)
+                }
+                .offset(y: showPickers ? 0 : UIScreen.main.bounds.height)
+                .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showPickers)
                     
                     Button("Done") { choicesMade = true }
                         .frame(width: 75, height: 30)
@@ -1434,16 +1630,12 @@ struct PickerScreen: View {
                     .padding(.top, 20)
                     .offset(y: showButton ? 0 : UIScreen.main.bounds.height)
                     .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.3), value: showButton)
-                }
             }
-            .padding(.vertical, 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundStyle(.white)
         .safeAreaInset(edge: .top) { Color.clear.frame(height: 0) }
-        .background(LinearGradient(colors: [.pink.opacity(0.4), .pink.opacity(0.7)],
-                                   startPoint: .top, endPoint: .bottom)
-                        .ignoresSafeArea())
+        .background(AnimatedMeshBackground())
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showImage = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { showPickers = true }
