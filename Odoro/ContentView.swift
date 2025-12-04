@@ -1520,117 +1520,126 @@ struct PickerScreen: View {
     @State private var showButton = false
     @State private var showStats = false
     
+    @Environment(\.verticalSizeClass) var verticalSizeClass
+    
+    var isLandscape: Bool {
+        verticalSizeClass == .compact
+    }
+    
     var body: some View {
-        VStack(spacing: 20) {
-            Image("logo2")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 45, height: 45)
-                .cornerRadius(10)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.white, lineWidth: 3)
-                )
-                .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
-                .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
-            
-            if !choicesMade {
-                HStack {
-                    VStack {
-                        Text("Lock In Time")
-                            .font(.title).bold()
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: isLandscape ? 12 : 20) {
+                Image("logo2")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
+                    .cornerRadius(10)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.white, lineWidth: 3)
+                    )
+                    .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
+                    .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
+                
+                if !choicesMade {
+                    HStack {
+                        VStack(spacing: isLandscape ? 4 : 8) {
+                            Text("Lock In Time")
+                                .font(isLandscape ? .headline : .title).bold()
+                            
+                            Picker("Lock In Time", selection: $studyTime) {
+                                ForEach(1...60, id: \.self) { num in
+                                    Text("\(num) min").foregroundStyle(.white).bold()
+                                }
+                            }
+                            .frame(maxWidth: 350, maxHeight: isLandscape ? 120 : nil)
+                            .shadow(radius: 20)
+                            .pickerStyle(.wheel)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(isLandscape ? 20 : 30)
+                            .overlay(RoundedRectangle(cornerRadius: isLandscape ? 20 : 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
+                        }
+                        .padding(.horizontal)
                         
-                        Picker("Lock In Time", selection: $studyTime) {
-                            ForEach(1...60, id: \.self) { num in
-                                Text("\(num) min").foregroundStyle(.white).bold()
+                        VStack(spacing: isLandscape ? 4 : 8) {
+                            Text("Chill Time")
+                                .font(isLandscape ? .headline : .title).bold()
+                            
+                            Picker("Chill Time", selection: $restTime) {
+                                ForEach(1...60, id: \.self) { num in
+                                    Text("\(num) min").foregroundStyle(.white).bold()
+                                }
+                            }
+                            .frame(maxWidth: 350, maxHeight: isLandscape ? 120 : nil)
+                            .shadow(radius: 20)
+                            .pickerStyle(.wheel)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(isLandscape ? 20 : 30)
+                            .overlay(RoundedRectangle(cornerRadius: isLandscape ? 20 : 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
+                        }
+                        .padding(.horizontal)
+                    }
+                    .offset(y: showPickers ? 0 : UIScreen.main.bounds.height)
+                    .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showPickers)
+                        
+                        Button("Done") { choicesMade = true }
+                            .frame(width: 75, height: 30)
+                            .foregroundStyle(.white)
+                            .background(.blue.opacity(0.7))
+                            .clipShape(.capsule)
+                            .shadow(radius: 20)
+                            .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white, lineWidth: 3))
+                            .offset(y: showButton ? 0 : UIScreen.main.bounds.height)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.2), value: showButton)
+                        
+                        // Stats Section
+                        VStack(spacing: isLandscape ? 10 : 16) {
+                            Button {
+                                withAnimation(.spring(response: 0.4)) {
+                                    showStats.toggle()
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "chart.bar.fill")
+                                    Text("Your Stats")
+                                        .font(.headline)
+                                    Spacer()
+                                    Image(systemName: showStats ? "chevron.up" : "chevron.down")
+                                }
+                                .foregroundColor(.white)
+                                .padding(isLandscape ? 12 : 16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(.ultraThinMaterial)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 16)
+                                                .stroke(.white.opacity(0.3), lineWidth: 1)
+                                        )
+                                )
+                            }
+                            
+                            if showStats {
+                                VStack(spacing: isLandscape ? 10 : 16) {
+                                    HStack(spacing: 16) {
+                                        PickerStatBox(title: "Today", value: stats.todayFormatted, icon: "sun.max.fill", color: .orange)
+                                        PickerStatBox(title: "This Week", value: stats.weekFormatted, icon: "calendar", color: .blue)
+                                    }
+                                    
+                                    HStack(spacing: 16) {
+                                        PickerStatBox(title: "Sessions", value: "\(stats.sessionsCompleted)", icon: "checkmark.circle.fill", color: .green)
+                                        PickerStatBox(title: "Streak", value: "\(stats.currentStreak) days", icon: "flame.fill", color: .red)
+                                    }
+                                }
+                                .transition(.opacity.combined(with: .move(edge: .top)))
                             }
                         }
-                        .frame(maxWidth: 350)
-                        .shadow(radius: 20)
-                        .pickerStyle(.wheel)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(30)
-                        .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
-                    }
-                    .padding(.horizontal)
-                    
-                    VStack {
-                        Text("Chill Time")
-                            .font(.title).bold()
-                        
-                        Picker("Chill Time", selection: $restTime) {
-                            ForEach(1...60, id: \.self) { num in
-                                Text("\(num) min").foregroundStyle(.white).bold()
-                            }
-                        }
-                        .frame(maxWidth: 350)
-                        .shadow(radius: 20)
-                        .pickerStyle(.wheel)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(30)
-                        .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
-                    }
-                    .padding(.horizontal)
-                }
-                .offset(y: showPickers ? 0 : UIScreen.main.bounds.height)
-                .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showPickers)
-                    
-                    Button("Done") { choicesMade = true }
-                        .frame(width: 75, height: 30)
-                        .foregroundStyle(.white)
-                        .background(.blue.opacity(0.7))
-                        .clipShape(.capsule)
-                        .shadow(radius: 20)
-                        .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white, lineWidth: 3))
+                        .padding(.horizontal, 24)
+                        .padding(.top, isLandscape ? 10 : 20)
                         .offset(y: showButton ? 0 : UIScreen.main.bounds.height)
-                        .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.2), value: showButton)
-                    
-                    // Stats Section
-                    VStack(spacing: 16) {
-                        Button {
-                            withAnimation(.spring(response: 0.4)) {
-                                showStats.toggle()
-                            }
-                        } label: {
-                            HStack {
-                                Image(systemName: "chart.bar.fill")
-                                Text("Your Stats")
-                                    .font(.headline)
-                                Spacer()
-                                Image(systemName: showStats ? "chevron.up" : "chevron.down")
-                            }
-                            .foregroundColor(.white)
-                            .padding(16)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 16)
-                                            .stroke(.white.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                        }
-                        
-                        if showStats {
-                            VStack(spacing: 16) {
-                                HStack(spacing: 16) {
-                                    PickerStatBox(title: "Today", value: stats.todayFormatted, icon: "sun.max.fill", color: .orange)
-                                    PickerStatBox(title: "This Week", value: stats.weekFormatted, icon: "calendar", color: .blue)
-                                }
-                                
-                                HStack(spacing: 16) {
-                                    PickerStatBox(title: "Sessions", value: "\(stats.sessionsCompleted)", icon: "checkmark.circle.fill", color: .green)
-                                    PickerStatBox(title: "Streak", value: "\(stats.currentStreak) days", icon: "flame.fill", color: .red)
-                                }
-                            }
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 20)
-                    .offset(y: showButton ? 0 : UIScreen.main.bounds.height)
-                    .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.3), value: showButton)
+                        .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.3), value: showButton)
+                }
             }
+            .padding(.vertical, isLandscape ? 20 : 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundStyle(.white)
