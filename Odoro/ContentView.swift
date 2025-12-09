@@ -1393,9 +1393,9 @@ struct LogoScreen: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [.white, .orange], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-
+            // Animated wave background
+            AnimatedMeshBackground()
+            
             VStack {
                 HStack {
                     Image("logo2")
@@ -1407,6 +1407,7 @@ struct LogoScreen: View {
                             RoundedRectangle(cornerRadius: 10)
                                 .stroke(Color.white, lineWidth: 6)
                         )
+                        .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
                         .offset(y: jumpUp ? -20 : 0)
                         .animation(.easeInOut(duration: 0.3), value: jumpUp)
                         .onAppear {
@@ -1424,13 +1425,15 @@ struct LogoScreen: View {
                         .scaledToFit()
                         .frame(width: 250)
                         .padding(.leading)
+                        .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                 }
                 .padding(.top, 100)
 
                 Text("Your study buddy")
                     .padding(.top, 100)
                     .font(.headline).bold()
-                    .foregroundStyle(.regularMaterial)
+                    .foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.3), radius: 3, x: 0, y: 2)
             }
         }
     }
@@ -1638,6 +1641,7 @@ struct PickerScreen: View {
     @Binding var studyTime: Int
     @Binding var restTime: Int
     @Binding var choicesMade: Bool
+    @Binding var showTimerFlow: Bool
     @ObservedObject var stats: StatsManager
     @ObservedObject var settings: AppSettings
     
@@ -1646,6 +1650,8 @@ struct PickerScreen: View {
     @State private var showButton = false
     @State private var showStats = false
     
+    @Environment(\.colorScheme) var colorScheme
+    
     @Environment(\.verticalSizeClass) var verticalSizeClass
     
     var isLandscape: Bool {
@@ -1653,68 +1659,82 @@ struct PickerScreen: View {
     }
     
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: isLandscape ? 12 : 20) {
-                Image("logo2")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
-                    .cornerRadius(10)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.white, lineWidth: 3)
-                    )
-                    .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
-                    .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
-                
-                if !choicesMade {
-                    HStack {
-                        VStack(spacing: isLandscape ? 4 : 8) {
-                            Text("Lock In Time")
-                                .font(isLandscape ? .headline : .title).bold()
-                            
-                            Picker("Lock In Time", selection: $studyTime) {
-                                ForEach(1...60, id: \.self) { num in
-                                    Text("\(num) min").foregroundStyle(.white).bold()
-                                }
-                            }
-                            .frame(maxWidth: 350, maxHeight: isLandscape ? 120 : nil)
-                            .shadow(radius: 20)
-                            .pickerStyle(.wheel)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(isLandscape ? 20 : 30)
-                            .overlay(RoundedRectangle(cornerRadius: isLandscape ? 20 : 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
-                        }
-                        .padding(.horizontal)
-                        
-                        VStack(spacing: isLandscape ? 4 : 8) {
-                            Text("Chill Time")
-                                .font(isLandscape ? .headline : .title).bold()
-                            
-                            Picker("Chill Time", selection: $restTime) {
-                                ForEach(1...60, id: \.self) { num in
-                                    Text("\(num) min").foregroundStyle(.white).bold()
-                                }
-                            }
-                            .frame(maxWidth: 350, maxHeight: isLandscape ? 120 : nil)
-                            .shadow(radius: 20)
-                            .pickerStyle(.wheel)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(isLandscape ? 20 : 30)
-                            .overlay(RoundedRectangle(cornerRadius: isLandscape ? 20 : 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
-                        }
-                        .padding(.horizontal)
+        ZStack {
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: isLandscape ? 12 : 20) {
+                    if colorScheme == .light {
+                        Image("logo2")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white, lineWidth: 3)
+                            )
+                            .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
+                    } else if colorScheme == .dark {
+                        Image("logo3")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white, lineWidth: 3)
+                            )
+                            .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
                     }
-                    .offset(y: showPickers ? 0 : UIScreen.main.bounds.height)
-                    .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showPickers)
-                        
-                        Button("Done") { choicesMade = true }
-                            .frame(width: 75, height: 30)
-                            .foregroundStyle(.white)
-                            .background(.blue.opacity(0.7))
-                            .clipShape(.capsule)
-                            .shadow(radius: 20)
-                            .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white, lineWidth: 3))
+                    if !choicesMade {
+                        HStack {
+                            VStack(spacing: isLandscape ? 4 : 8) {
+                                Text("Lock In Time")
+                                    .font(isLandscape ? .headline : .title).bold()
+                                
+                                Picker("Lock In Time", selection: $studyTime) {
+                                    ForEach(1...60, id: \.self) { num in
+                                        Text("\(num) min").foregroundStyle(.white).bold()
+                                    }
+                                }
+                                .frame(maxWidth: 350, maxHeight: isLandscape ? 120 : nil)
+                                .shadow(radius: 20)
+                                .pickerStyle(.wheel)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(isLandscape ? 20 : 30)
+                                .overlay(RoundedRectangle(cornerRadius: isLandscape ? 20 : 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
+                            }
+                            .padding(.horizontal)
+                            
+                            VStack(spacing: isLandscape ? 4 : 8) {
+                                Text("Chill Time")
+                                    .font(isLandscape ? .headline : .title).bold()
+                                
+                                Picker("Chill Time", selection: $restTime) {
+                                    ForEach(1...60, id: \.self) { num in
+                                        Text("\(num) min").foregroundStyle(.white).bold()
+                                    }
+                                }
+                                .frame(maxWidth: 350, maxHeight: isLandscape ? 120 : nil)
+                                .shadow(radius: 20)
+                                .pickerStyle(.wheel)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(isLandscape ? 20 : 30)
+                                .overlay(RoundedRectangle(cornerRadius: isLandscape ? 20 : 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
+                            }
+                            .padding(.horizontal)
+                        }
+                        .offset(y: showPickers ? 0 : UIScreen.main.bounds.height)
+                        .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showPickers)
+                            
+                            Button("Done") { choicesMade = true }
+                                .frame(width: 75, height: 30)
+                                .foregroundStyle(.white)
+                                .background(.blue.opacity(0.7))
+                                .clipShape(.capsule)
+                                .shadow(radius: 20)
+                                .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white, lineWidth: 3))
                             .offset(y: showButton ? 0 : UIScreen.main.bounds.height)
                             .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.2), value: showButton)
                         
@@ -1771,6 +1791,34 @@ struct PickerScreen: View {
         .foregroundStyle(.white)
         .safeAreaInset(edge: .top) { Color.clear.frame(height: 0) }
         .background(AnimatedMeshBackground())
+            
+            // Back button overlay
+            VStack {
+                HStack {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showTimerFlow = false
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 18, weight: .semibold))
+                            .frame(width: 24, height: 24)
+                            .foregroundColor(.white)
+                            .padding(12)
+                            .background(
+                                Circle()
+                                    .fill(.ultraThinMaterial)
+                                    .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
+                            )
+                            .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
+                    }
+                    .padding(.leading, 20)
+                    .padding(.top, 8)
+                    Spacer()
+                }
+                Spacer()
+            }
+        }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showImage = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { showPickers = true }
@@ -2380,6 +2428,7 @@ struct ContentView: View {
     @State private var restTime = 5
     @State private var choicesMade = false
     @State private var showLogoScreen = false
+    @State private var showTimerFlow = false
     @StateObject private var settings = AppSettings()
     @StateObject private var stats = StatsManager()
     @StateObject private var soundManager = FocusSoundManager()
@@ -2390,17 +2439,27 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                if showLogoScreen {
-                    LogoScreen(isFinished: $showLogoScreen)
-                } else if !choicesMade {
-                    PickerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade, stats: stats, settings: settings)
-                } else {
-                    TimerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade, settings: settings, stats: stats, soundManager: soundManager)
-                }
+        ZStack {
+            if showLogoScreen {
+                LogoScreen(isFinished: $showLogoScreen)
+                    .transition(.opacity)
+            } else if !showTimerFlow {
+                // Main Tracker/Home screen
+                TrackerView(showTimer: $showTimerFlow, stats: stats, settings: settings)
+                    .transition(.opacity)
+            } else if !choicesMade {
+                // Timer picker screen
+                PickerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade, showTimerFlow: $showTimerFlow, stats: stats, settings: settings)
+                    .transition(.opacity)
+            } else {
+                // Timer screen
+                TimerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade, settings: settings, stats: stats, soundManager: soundManager)
+                    .transition(.opacity)
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: showLogoScreen)
+        .animation(.easeInOut(duration: 0.25), value: showTimerFlow)
+        .animation(.easeInOut(duration: 0.25), value: choicesMade)
         .onAppear {
             requestNotificationPermission()
         }
