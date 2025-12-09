@@ -332,18 +332,35 @@ class FocusSoundManager: ObservableObject {
     func play() {
         guard let sound = currentSound else { return }
         
-        // Try to load from bundle
-        guard let url = Bundle.main.url(forResource: sound.fileName, withExtension: "mp3") else {
-            print("Sound file not found: \(sound.fileName).mp3")
+        // Try multiple audio file extensions
+        let extensions = ["mp3", "m4a", "wav", "aac"]
+        var url: URL?
+        
+        for ext in extensions {
+            if let foundURL = Bundle.main.url(forResource: sound.fileName, withExtension: ext) {
+                url = foundURL
+                print("Found sound file: \(sound.fileName).\(ext)")
+                break
+            }
+        }
+        
+        guard let audioURL = url else {
+            print("Sound file not found: \(sound.fileName) (tried: \(extensions.joined(separator: ", ")))")
             return
         }
         
         do {
-            audioPlayer = try AVAudioPlayer(contentsOf: url)
+            // Re-setup audio session to ensure it's active
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            
+            audioPlayer = try AVAudioPlayer(contentsOf: audioURL)
             audioPlayer?.numberOfLoops = -1 // Loop forever
             audioPlayer?.volume = volume
+            audioPlayer?.prepareToPlay()
             audioPlayer?.play()
             isPlaying = true
+            print("Playing sound: \(sound.displayName) at volume \(volume)")
         } catch {
             print("Error playing sound: \(error)")
         }
@@ -363,6 +380,10 @@ class FocusSoundManager: ObservableObject {
     func setSound(_ sound: FocusSound?) {
         stop()
         currentSound = sound
+        // Automatically play when a sound is selected
+        if sound != nil {
+            play()
+        }
     }
 }
 
@@ -442,17 +463,25 @@ class AppSettings: ObservableObject {
 class CameraManager: NSObject, ObservableObject {
     @Published var isRecording = false
     @Published var previewImage: UIImage?
-    @Published var capturedFrames: [UIImage] = []
     
     private var captureSession: AVCaptureSession?
     private var videoOutput: AVCaptureVideoDataOutput?
     private var captureTimer: Timer?
-    private let captureInterval: TimeInterval = 0.5 // Capture every 0.5 seconds for smoother timelapse
-    private var lastCaptureTime: Date = Date()
+    private let captureInterval: TimeInterval = 0.5
     private var shouldCaptureFrame = false
     
     private let sessionQueue = DispatchQueue(label: "cameraSessionQueue")
     private let videoOutputQueue = DispatchQueue(label: "videoOutputQueue")
+    private let writerQueue = DispatchQueue(label: "writerQueue")
+    
+    // Streaming video writer
+    private var assetWriter: AVAssetWriter?
+    private var assetWriterInput: AVAssetWriterInput?
+    private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+    private var frameCount: Int64 = 0
+    private var outputURL: URL?
+    private var videoSize: CGSize?
+    private var isWriterReady = false
     
     var onTimelapseComplete: ((URL?) -> Void)?
     
@@ -495,7 +524,6 @@ class CameraManager: NSObject, ObservableObject {
             captureSession?.addInput(input)
         }
         
-        // Use video output for smooth preview
         videoOutput = AVCaptureVideoDataOutput()
         videoOutput?.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -506,7 +534,6 @@ class CameraManager: NSObject, ObservableObject {
         if let videoOutput = videoOutput, captureSession?.canAddOutput(videoOutput) == true {
             captureSession?.addOutput(videoOutput)
             
-            // Fix orientation
             if let connection = videoOutput.connection(with: .video) {
                 connection.videoRotationAngle = 90
                 connection.isVideoMirrored = true
@@ -521,13 +548,85 @@ class CameraManager: NSObject, ObservableObject {
         
         DispatchQueue.main.async {
             self.isRecording = true
-            self.capturedFrames.removeAll()
-            self.lastCaptureTime = Date()
+            self.frameCount = 0
+            self.isWriterReady = false
+            self.videoSize = nil
         }
         
         // Start capture timer
         captureTimer = Timer.scheduledTimer(withTimeInterval: captureInterval, repeats: true) { [weak self] _ in
             self?.shouldCaptureFrame = true
+        }
+    }
+    
+    private func setupAssetWriter(size: CGSize) {
+        writerQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("timelapse_\(Date().timeIntervalSince1970).mp4")
+            try? FileManager.default.removeItem(at: url)
+            self.outputURL = url
+            self.videoSize = size
+            
+            guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else {
+                print("Failed to create asset writer")
+                return
+            }
+            
+            let videoSettings: [String: Any] = [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: size.width,
+                AVVideoHeightKey: size.height,
+                AVVideoCompressionPropertiesKey: [
+                    AVVideoAverageBitRateKey: 2000000,
+                    AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
+                ]
+            ]
+            
+            let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+            writerInput.expectsMediaDataInRealTime = true
+            
+            let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+                assetWriterInput: writerInput,
+                sourcePixelBufferAttributes: [
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                    kCVPixelBufferWidthKey as String: size.width,
+                    kCVPixelBufferHeightKey as String: size.height
+                ]
+            )
+            
+            if writer.canAdd(writerInput) {
+                writer.add(writerInput)
+            }
+            
+            self.assetWriter = writer
+            self.assetWriterInput = writerInput
+            self.pixelBufferAdaptor = adaptor
+            
+            writer.startWriting()
+            writer.startSession(atSourceTime: .zero)
+            
+            self.isWriterReady = true
+        }
+    }
+    
+    private func appendFrame(pixelBuffer: CVPixelBuffer) {
+        writerQueue.async { [weak self] in
+            guard let self = self,
+                  self.isWriterReady,
+                  let writerInput = self.assetWriterInput,
+                  let adaptor = self.pixelBufferAdaptor,
+                  writerInput.isReadyForMoreMediaData else {
+                return
+            }
+            
+            // 30fps playback for timelapse
+            let frameDuration = CMTime(value: 1, timescale: 30)
+            let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(self.frameCount))
+            
+            if adaptor.append(pixelBuffer, withPresentationTime: presentationTime) {
+                self.frameCount += 1
+            }
         }
     }
     
@@ -541,120 +640,39 @@ class CameraManager: NSObject, ObservableObject {
         captureTimer?.invalidate()
         captureTimer = nil
         
-        // Create video on background thread
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        writerQueue.async { [weak self] in
             guard let self = self else { return }
-            if self.capturedFrames.count > 1 {
-                self.createTimelapseVideo()
-            } else {
+            
+            guard let writer = self.assetWriter,
+                  let input = self.assetWriterInput,
+                  self.frameCount > 0 else {
                 DispatchQueue.main.async {
                     self.onTimelapseComplete?(nil)
                 }
-            }
-        }
-    }
-    
-    private func createTimelapseVideo() {
-        guard !capturedFrames.isEmpty else {
-            DispatchQueue.main.async { self.onTimelapseComplete?(nil) }
-            return
-        }
-        
-        let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("timelapse_\(Date().timeIntervalSince1970).mp4")
-        try? FileManager.default.removeItem(at: outputURL)
-        
-        guard let firstImage = capturedFrames.first else {
-            DispatchQueue.main.async { self.onTimelapseComplete?(nil) }
-            return
-        }
-        
-        let size = firstImage.size
-        
-        guard let writer = try? AVAssetWriter(outputURL: outputURL, fileType: .mp4) else {
-            DispatchQueue.main.async { self.onTimelapseComplete?(nil) }
-            return
-        }
-        
-        let videoSettings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: size.width,
-            AVVideoHeightKey: size.height
-        ]
-        
-        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: writerInput,
-            sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
-                kCVPixelBufferWidthKey as String: size.width,
-                kCVPixelBufferHeightKey as String: size.height
-            ]
-        )
-        
-        writer.add(writerInput)
-        writer.startWriting()
-        writer.startSession(atSourceTime: .zero)
-        
-        // 30fps playback for smooth timelapse
-        let frameDuration = CMTime(value: 1, timescale: 30)
-        var frameCount: Int64 = 0
-        
-        for image in capturedFrames {
-            while !writerInput.isReadyForMoreMediaData {
-                Thread.sleep(forTimeInterval: 0.01)
+                return
             }
             
-            if let buffer = pixelBuffer(from: image) {
-                let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(frameCount))
-                adaptor.append(buffer, withPresentationTime: presentationTime)
+            input.markAsFinished()
+            
+            writer.finishWriting { [weak self] in
+                guard let self = self else { return }
+                
+                if writer.status == .completed, let url = self.outputURL {
+                    self.saveToPhotoLibrary(url: url)
+                } else {
+                    print("Writer failed: \(writer.error?.localizedDescription ?? "unknown")")
+                    DispatchQueue.main.async {
+                        self.onTimelapseComplete?(nil)
+                    }
+                }
+                
+                // Cleanup
+                self.assetWriter = nil
+                self.assetWriterInput = nil
+                self.pixelBufferAdaptor = nil
+                self.isWriterReady = false
             }
-            frameCount += 1
         }
-        
-        writerInput.markAsFinished()
-        
-        let semaphore = DispatchSemaphore(value: 0)
-        writer.finishWriting {
-            semaphore.signal()
-        }
-        semaphore.wait()
-        
-        if writer.status == .completed {
-            saveToPhotoLibrary(url: outputURL)
-        } else {
-            DispatchQueue.main.async { self.onTimelapseComplete?(nil) }
-        }
-    }
-    
-    private func pixelBuffer(from image: UIImage) -> CVPixelBuffer? {
-        let size = image.size
-        var pixelBuffer: CVPixelBuffer?
-        
-        let attrs: [String: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey as String: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
-        ]
-        
-        CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height),
-                           kCVPixelFormatType_32ARGB, attrs as CFDictionary, &pixelBuffer)
-        
-        guard let buffer = pixelBuffer else { return nil }
-        
-        CVPixelBufferLockBaseAddress(buffer, [])
-        let context = CGContext(
-            data: CVPixelBufferGetBaseAddress(buffer),
-            width: Int(size.width), height: Int(size.height),
-            bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-        )
-        
-        if let cgImage = image.cgImage {
-            context?.draw(cgImage, in: CGRect(origin: .zero, size: size))
-        }
-        
-        CVPixelBufferUnlockBaseAddress(buffer, [])
-        return buffer
     }
     
     private func saveToPhotoLibrary(url: URL) {
@@ -679,6 +697,14 @@ class CameraManager: NSObject, ObservableObject {
             self?.captureSession?.stopRunning()
         }
         captureTimer?.invalidate()
+        
+        // Clean up writer if still active
+        writerQueue.async { [weak self] in
+            self?.assetWriter?.cancelWriting()
+            self?.assetWriter = nil
+            self?.assetWriterInput = nil
+            self?.pixelBufferAdaptor = nil
+        }
     }
 }
 
@@ -695,11 +721,46 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         DispatchQueue.main.async {
             // Always update preview for smooth video feed
             self.previewImage = image
+        }
+        
+        // Capture frame for timelapse if recording and timer triggered
+        if isRecording && shouldCaptureFrame {
+            shouldCaptureFrame = false
             
-            // Capture frame for timelapse if recording and timer triggered
-            if self.isRecording && self.shouldCaptureFrame {
-                self.capturedFrames.append(image)
-                self.shouldCaptureFrame = false
+            // Setup writer on first frame to get correct size
+            if !isWriterReady && videoSize == nil {
+                let width = CVPixelBufferGetWidth(pixelBuffer)
+                let height = CVPixelBufferGetHeight(pixelBuffer)
+                setupAssetWriter(size: CGSize(width: width, height: height))
+            }
+            
+            // Copy pixel buffer and append to video
+            if isWriterReady {
+                var copiedBuffer: CVPixelBuffer?
+                let width = CVPixelBufferGetWidth(pixelBuffer)
+                let height = CVPixelBufferGetHeight(pixelBuffer)
+                
+                CVPixelBufferCreate(kCFAllocatorDefault, width, height,
+                                   CVPixelBufferGetPixelFormatType(pixelBuffer),
+                                   nil, &copiedBuffer)
+                
+                if let copiedBuffer = copiedBuffer {
+                    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+                    CVPixelBufferLockBaseAddress(copiedBuffer, [])
+                    
+                    let srcData = CVPixelBufferGetBaseAddress(pixelBuffer)
+                    let destData = CVPixelBufferGetBaseAddress(copiedBuffer)
+                    let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+                    
+                    if let srcData = srcData, let destData = destData {
+                        memcpy(destData, srcData, bytesPerRow * height)
+                    }
+                    
+                    CVPixelBufferUnlockBaseAddress(copiedBuffer, [])
+                    CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+                    
+                    appendFrame(pixelBuffer: copiedBuffer)
+                }
             }
         }
     }
@@ -708,10 +769,33 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
 // MARK: - Draggable Camera Preview
 struct DraggableCameraPreview: View {
     @ObservedObject var cameraManager: CameraManager
+    @Binding var isHidden: Bool
     @State private var position: CGPoint = CGPoint(x: 80, y: 150)
     @State private var dragOffset: CGSize = .zero
     @State private var recordingDuration: Int = 0
     @State private var recordingTimer: Timer?
+    @State private var deviceOrientation: UIDeviceOrientation = UIDevice.current.orientation
+    
+    @Environment(\.verticalSizeClass) var verticalSizeClass
+    
+    var isLandscape: Bool {
+        verticalSizeClass == .compact
+    }
+    
+    var rotationAngle: Double {
+        if !isLandscape {
+            return 0
+        }
+        // Check actual device orientation for correct rotation
+        switch deviceOrientation {
+        case .landscapeLeft:
+            return -90
+        case .landscapeRight:
+            return 90
+        default:
+            return -90 // Default landscape rotation
+        }
+    }
     
     var body: some View {
         ZStack {
@@ -736,6 +820,7 @@ struct DraggableCameraPreview: View {
                             .resizable()
                             .scaledToFill()
                             .frame(width: 130, height: 170)
+                            .rotationEffect(.degrees(rotationAngle))
                             .clipped()
                     } else {
                         Rectangle()
@@ -796,6 +881,27 @@ struct DraggableCameraPreview: View {
                         }
                         .frame(width: 130, height: 170)
                     }
+                    
+                    // Hide button
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Button {
+                                withAnimation(.spring(response: 0.3)) {
+                                    isHidden = true
+                                }
+                            } label: {
+                                Image(systemName: "eye.slash.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.white)
+                                    .padding(6)
+                                    .background(Circle().fill(.black.opacity(0.5)))
+                            }
+                            .padding(6)
+                        }
+                    }
+                    .frame(width: 130, height: 170)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(8)
@@ -814,9 +920,17 @@ struct DraggableCameraPreview: View {
         )
         .onAppear {
             startRecordingTimer()
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            deviceOrientation = UIDevice.current.orientation
         }
         .onDisappear {
             recordingTimer?.invalidate()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            let newOrientation = UIDevice.current.orientation
+            if newOrientation.isLandscape || newOrientation.isPortrait {
+                deviceOrientation = newOrientation
+            }
         }
         .onChange(of: cameraManager.isRecording) { _, isRecording in
             if isRecording {
@@ -896,14 +1010,6 @@ struct SettingsPanel: View {
     
     var body: some View {
         ZStack {
-            // Blur background instead of dark overlay
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.4)) { isPresented = false }
-                }
-            
             VStack(spacing: 0) {
                 // Header
                 HStack {
@@ -1112,6 +1218,7 @@ struct SettingsPanel: View {
                 // Sound options
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     ForEach(FocusSoundManager.FocusSound.allCases, id: \.rawValue) { sound in
+                        let isAvailable = soundFileExists(sound)
                         Button {
                             if soundManager.currentSound == sound {
                                 soundManager.setSound(nil)
@@ -1119,20 +1226,28 @@ struct SettingsPanel: View {
                                 soundManager.setSound(sound)
                             }
                         } label: {
-                            Text(sound.displayName)
-                                .font(.subheadline.bold())
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(soundManager.currentSound == sound ? .blue.opacity(0.5) : .white.opacity(0.15))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(soundManager.currentSound == sound ? .blue : .clear, lineWidth: 2)
-                                )
+                            HStack {
+                                Text(sound.displayName)
+                                    .font(.subheadline.bold())
+                                if !isAvailable {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.yellow)
+                                }
+                            }
+                            .foregroundColor(isAvailable ? .white : .white.opacity(0.5))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(soundManager.currentSound == sound ? .blue.opacity(0.5) : .white.opacity(0.15))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(soundManager.currentSound == sound ? .blue : .clear, lineWidth: 2)
+                            )
                         }
+                        .disabled(!isAvailable)
                     }
                 }
                 
@@ -1183,7 +1298,7 @@ struct SettingsPanel: View {
                         .font(.headline)
                         .foregroundColor(.white)
                 }
-                Text("Add audio files (rain.mp3, lofi.mp3, etc.) to your app bundle to enable focus sounds.")
+                Text("Add audio files to your app bundle with these exact names: rain, lofi, whitenoise, coffeeshop, forest, ocean (.mp3, .m4a, or .wav)")
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.6))
             }
@@ -1241,6 +1356,17 @@ struct SettingsPanel: View {
             .padding(16)
             .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
         }
+    }
+    
+    // Helper to check if sound file exists
+    func soundFileExists(_ sound: FocusSoundManager.FocusSound) -> Bool {
+        let extensions = ["mp3", "m4a", "wav", "aac"]
+        for ext in extensions {
+            if Bundle.main.url(forResource: sound.fileName, withExtension: ext) != nil {
+                return true
+            }
+        }
+        return false
     }
 }
 
@@ -1690,9 +1816,16 @@ struct PickerStatBox: View {
 struct TimerScreen: View {
     @Binding var studyTime: Int
     @Binding var restTime: Int
+    @Binding var choicesMade: Bool
     @ObservedObject var settings: AppSettings
     @ObservedObject var stats: StatsManager
     @ObservedObject var soundManager: FocusSoundManager
+    
+    @Environment(\.verticalSizeClass) var verticalSizeClass
+    
+    var isLandscape: Bool {
+        verticalSizeClass == .compact
+    }
     
     @State private var isStudy = true
     @State private var secondsLeft: Int
@@ -1717,18 +1850,23 @@ struct TimerScreen: View {
     // Settings & Stats UI
     @State private var showSettings = false
     
-    // Auto-hide gear button
-    @State private var showGearButton = true
+    // Auto-hide UI elements
+    @State private var showUI = true
     @State private var hideTimer: Timer?
+    @State private var cameraPreviewHidden = false
+    
+    // Battery saver mode (dark mode)
+    @State private var batterySaverMode = false
     
     // Motion manager for fluid effect
     @StateObject private var motionManager = MotionManager()
     
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
-    init(studyTime: Binding<Int>, restTime: Binding<Int>, settings: AppSettings, stats: StatsManager, soundManager: FocusSoundManager) {
+    init(studyTime: Binding<Int>, restTime: Binding<Int>, choicesMade: Binding<Bool>, settings: AppSettings, stats: StatsManager, soundManager: FocusSoundManager) {
         self._studyTime = studyTime
         self._restTime = restTime
+        self._choicesMade = choicesMade
         self._settings = ObservedObject(wrappedValue: settings)
         self._stats = ObservedObject(wrappedValue: stats)
         self._soundManager = ObservedObject(wrappedValue: soundManager)
@@ -1762,75 +1900,86 @@ struct TimerScreen: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // Background
-                (isStudy ? settings.studyBackgroundColor : settings.restBackgroundColor)
-                    .ignoresSafeArea()
-                
-                // Fluid progress fill
-                FluidFillView(
-                    progress: progress,
-                    gradient: isStudy ? studyGradient : restGradient,
-                    motionManager: motionManager
-                )
+                // Background - black in battery saver mode
+                if batterySaverMode {
+                    Color.black
+                        .ignoresSafeArea()
+                } else {
+                    (isStudy ? settings.studyBackgroundColor : settings.restBackgroundColor)
+                        .ignoresSafeArea()
+                    
+                    // Fluid progress fill (only in normal mode)
+                    FluidFillView(
+                        progress: progress,
+                        gradient: isStudy ? studyGradient : restGradient,
+                        motionManager: motionManager
+                    )
+                }
                 
                 // Fixed centered content
                 VStack(spacing: 30) {
-                    // Timer label with session indicator
-                    VStack(spacing: 8) {
-                        Text(isStudy ? "Lock In Time" : (isLongBreak ? "Long Chill" : "Chill Time"))
-                            .font(.largeTitle)
-                            .bold()
-                            .foregroundColor(.white)
-                        
-                        if settings.longBreakEnabled {
-                            Text("Session \(consecutiveSessions + 1) of \(settings.sessionsUntilLongBreak)")
-                                .font(.subheadline)
-                                .foregroundColor(.white.opacity(0.7))
+                    // Timer label with session indicator (hidden in battery saver)
+                    if !batterySaverMode {
+                        VStack(spacing: 8) {
+                            Text(isStudy ? "Lock In Time" : (isLongBreak ? "Long Chill" : "Chill Time"))
+                                .font(.largeTitle)
+                                .bold()
+                                .foregroundColor(.white)
+                            
+                            if settings.longBreakEnabled {
+                                Text("Session \(consecutiveSessions + 1) of \(settings.sessionsUntilLongBreak)")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
                         }
                     }
                     
+                    // Timer - always visible, larger in battery saver mode
                     Text(timeString(from: secondsLeft))
-                        .font(.system(size: 70, weight: .bold, design: .monospaced))
+                        .font(.system(size: batterySaverMode ? 90 : 70, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
                     
-                    // Control buttons
-                    HStack(spacing: 16) {
-                        Button {
-                            toggleTimer()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: timerRunning ? "pause.fill" : "play.fill")
-                                Text(timerRunning ? "Pause" : "Start").bold()
+                    // Control buttons (auto-hiding, hidden in battery saver)
+                    if showUI && !batterySaverMode {
+                        HStack(spacing: 16) {
+                            Button {
+                                toggleTimer()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: timerRunning ? "pause.fill" : "play.fill")
+                                    Text(timerRunning ? "Pause" : "Start").bold()
+                                }
+                                .foregroundColor(.white)
                             }
-                            .foregroundColor(.white)
-                        }
-                        .buttonStyle(GlassButtonStyle(isActive: timerRunning, activeColor: .green))
-                        
-                        Button {
-                            resetTimer()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.counterclockwise")
-                                Text("Reset").bold()
+                            .buttonStyle(GlassButtonStyle(isActive: timerRunning, activeColor: .green))
+                            
+                            Button {
+                                resetTimer()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.counterclockwise")
+                                    Text("Reset").bold()
+                                }
+                                .foregroundColor(.white)
                             }
-                            .foregroundColor(.white)
-                        }
-                        .buttonStyle(GlassButtonStyle())
-                        
-                        Button {
-                            toggleTimelapse()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: cameraManager.isRecording ? "video.fill" : "video")
-                                Text(cameraManager.isRecording ? "Rec" : "Timelapse").bold()
+                            .buttonStyle(GlassButtonStyle())
+                            
+                            Button {
+                                toggleTimelapse()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: cameraManager.isRecording ? "video.fill" : "video")
+                                    Text(cameraManager.isRecording ? "Rec" : "Timelapse").bold()
+                                }
+                                .foregroundColor(.white)
                             }
-                            .foregroundColor(.white)
+                            .buttonStyle(GlassButtonStyle(isActive: cameraManager.isRecording, activeColor: .red))
                         }
-                        .buttonStyle(GlassButtonStyle(isActive: cameraManager.isRecording, activeColor: .red))
+                        .transition(.opacity)
                     }
                     
-                    // Sound indicator
-                    if soundManager.currentSound != nil && soundManager.isPlaying {
+                    // Sound indicator (auto-hiding, hidden in battery saver)
+                    if showUI && !batterySaverMode && soundManager.currentSound != nil && soundManager.isPlaying {
                         HStack(spacing: 6) {
                             Image(systemName: "speaker.wave.2.fill")
                             Text(soundManager.currentSound?.displayName ?? "")
@@ -1840,54 +1989,138 @@ struct TimerScreen: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(Capsule().fill(.white.opacity(0.15)))
+                        .transition(.opacity)
                     }
                 }
                 
-                // Camera preview
-                if showCameraPreview {
-                    DraggableCameraPreview(cameraManager: cameraManager)
+                // Camera preview (hidden in battery saver)
+                if showCameraPreview && !cameraPreviewHidden && !batterySaverMode {
+                    DraggableCameraPreview(cameraManager: cameraManager, isHidden: $cameraPreviewHidden)
                 }
                 
-                // Gear button (auto-hiding)
-                if showGearButton {
-                    VStack {
-                        HStack {
-                            Spacer()
-                            Button {
-                                withAnimation(.spring(response: 0.4)) { showSettings = true }
-                                showGearButtonTemporarily()
-                            } label: {
-                                Image(systemName: "gearshape.fill")
-                                    .font(.title2)
-                                    .foregroundColor(.white)
-                                    .padding(12)
-                                    .background(
-                                        Circle()
-                                            .fill(.ultraThinMaterial)
-                                            .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
-                                    )
-                                    .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
-                            }
-                            .padding(.trailing, 60)
-                            .padding(.top, 8)
-                        }
+                // Right-side buttons (auto-hiding): X close, Gear, Camera, and Battery Saver
+                // Top-right in portrait, vertically centered in landscape
+                if showUI {
+                    HStack {
                         Spacer()
+                        VStack {
+                            if !isLandscape {
+                                // Portrait: buttons at top
+                                Spacer().frame(height: 8)
+                            } else {
+                                // Landscape: center vertically
+                                Spacer()
+                            }
+                            
+                            VStack(spacing: 12) {
+                                // X close button
+                                Button {
+                                    // Save timelapse if recording before closing
+                                    if cameraManager.isRecording {
+                                        cameraManager.stopRecording()
+                                    }
+                                    choicesMade = false
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .frame(width: 24, height: 24)
+                                        .foregroundColor(.white)
+                                        .padding(12)
+                                        .background(
+                                            Circle()
+                                                .fill(.ultraThinMaterial)
+                                                .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
+                                        )
+                                        .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
+                                }
+                                
+                                // Gear button (hidden in battery saver)
+                                if !batterySaverMode {
+                                    Button {
+                                        withAnimation(.spring(response: 0.4)) { showSettings = true }
+                                        showUITemporarily()
+                                    } label: {
+                                        Image(systemName: "gearshape.fill")
+                                            .font(.system(size: 20))
+                                            .frame(width: 24, height: 24)
+                                            .foregroundColor(.white)
+                                            .padding(12)
+                                            .background(
+                                                Circle()
+                                                    .fill(.ultraThinMaterial)
+                                                    .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
+                                            )
+                                            .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
+                                    }
+                                }
+                                
+                                // Show camera button (when preview is hidden, hidden in battery saver)
+                                if showCameraPreview && cameraPreviewHidden && !batterySaverMode {
+                                    Button {
+                                        withAnimation(.spring(response: 0.3)) {
+                                            cameraPreviewHidden = false
+                                        }
+                                    } label: {
+                                        Image(systemName: "video.fill")
+                                            .font(.system(size: 18))
+                                            .frame(width: 24, height: 24)
+                                            .foregroundColor(.white)
+                                            .padding(12)
+                                            .background(
+                                                Circle()
+                                                    .fill(.ultraThinMaterial)
+                                                    .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
+                                            )
+                                            .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
+                                    }
+                                }
+                                
+                                // Battery saver / dark mode button
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.3)) {
+                                        batterySaverMode.toggle()
+                                    }
+                                } label: {
+                                    Image(systemName: batterySaverMode ? "sun.max.fill" : "moon.fill")
+                                        .font(.system(size: 20))
+                                        .frame(width: 24, height: 24)
+                                        .foregroundColor(batterySaverMode ? .yellow : .white)
+                                        .padding(12)
+                                        .background(
+                                            Circle()
+                                                .fill(.ultraThinMaterial)
+                                                .opacity(batterySaverMode ? 0.3 : 1.0)
+                                                .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
+                                        )
+                                        .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
+                                }
+                            }
+                            
+                            if isLandscape {
+                                // Landscape: center vertically
+                                Spacer()
+                            } else {
+                                // Portrait: let buttons stay at top
+                                Spacer()
+                            }
+                        }
+                        .padding(.trailing, 20)
                     }
                     .transition(.opacity)
                 }
                 
-                // Settings panel
-                if showSettings {
+                // Settings panel (hidden in battery saver)
+                if showSettings && !batterySaverMode {
                     SettingsPanel(settings: settings, soundManager: soundManager, isPresented: $showSettings)
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
         }
         .onTapGesture {
-            showGearButtonTemporarily()
+            showUITemporarily()
         }
         .onAppear {
-            showGearButtonTemporarily()
+            showUITemporarily()
         }
         .onReceive(timer) { _ in
             guard timerRunning else { return }
@@ -1918,15 +2151,15 @@ struct TimerScreen: View {
         }
     }
     
-    func showGearButtonTemporarily() {
+    func showUITemporarily() {
         withAnimation(.easeInOut(duration: 0.2)) {
-            showGearButton = true
+            showUI = true
         }
         
         hideTimer?.invalidate()
         hideTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
             withAnimation(.easeInOut(duration: 0.3)) {
-                showGearButton = false
+                showUI = false
             }
         }
     }
@@ -2164,10 +2397,7 @@ struct ContentView: View {
                 } else if !choicesMade {
                     PickerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade, stats: stats, settings: settings)
                 } else {
-                    TimerScreen(studyTime: $studyTime, restTime: $restTime, settings: settings, stats: stats, soundManager: soundManager)
-                        .toolbar {
-                            Button("", systemImage: "xmark") { choicesMade = false }
-                        }
+                    TimerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade, settings: settings, stats: stats, soundManager: soundManager)
                 }
             }
         }

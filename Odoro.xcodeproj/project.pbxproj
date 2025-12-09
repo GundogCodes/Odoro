@@ -6,7 +6,22 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		1FD3A9E82EE7F3CB007D380C /* whitenoise.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 1FD3A9E72EE7F3CB007D380C /* whitenoise.mp3 */; };
+		1FD3A9E92EE7F3CB007D380C /* forest.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 1FD3A9E32EE7F3CB007D380C /* forest.mp3 */; };
+		1FD3A9EA2EE7F3CB007D380C /* coffeeshop.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 1FD3A9E22EE7F3CB007D380C /* coffeeshop.mp3 */; };
+		1FD3A9EB2EE7F3CB007D380C /* lofi.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 1FD3A9E42EE7F3CB007D380C /* lofi.mp3 */; };
+		1FD3A9EC2EE7F3CB007D380C /* ocean.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 1FD3A9E52EE7F3CB007D380C /* ocean.mp3 */; };
+		1FD3A9ED2EE7F3CB007D380C /* rain.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 1FD3A9E62EE7F3CB007D380C /* rain.mp3 */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		1FD3A9E22EE7F3CB007D380C /* coffeeshop.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = coffeeshop.mp3; sourceTree = "<group>"; };
+		1FD3A9E32EE7F3CB007D380C /* forest.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = forest.mp3; sourceTree = "<group>"; };
+		1FD3A9E42EE7F3CB007D380C /* lofi.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = lofi.mp3; sourceTree = "<group>"; };
+		1FD3A9E52EE7F3CB007D380C /* ocean.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ocean.mp3; sourceTree = "<group>"; };
+		1FD3A9E62EE7F3CB007D380C /* rain.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = rain.mp3; sourceTree = "<group>"; };
+		1FD3A9E72EE7F3CB007D380C /* whitenoise.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = whitenoise.mp3; sourceTree = "<group>"; };
 		35529FB22E46A8D4002EC013 /* Odoro.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Odoro.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -45,6 +60,12 @@
 		35529FA92E46A8D4002EC013 = {
 			isa = PBXGroup;
 			children = (
+				1FD3A9E22EE7F3CB007D380C /* coffeeshop.mp3 */,
+				1FD3A9E32EE7F3CB007D380C /* forest.mp3 */,
+				1FD3A9E42EE7F3CB007D380C /* lofi.mp3 */,
+				1FD3A9E52EE7F3CB007D380C /* ocean.mp3 */,
+				1FD3A9E62EE7F3CB007D380C /* rain.mp3 */,
+				1FD3A9E72EE7F3CB007D380C /* whitenoise.mp3 */,
 				35529FB42E46A8D4002EC013 /* Odoro */,
 				35529FB32E46A8D4002EC013 /* Products */,
 			);
@@ -122,6 +143,12 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1FD3A9E82EE7F3CB007D380C /* whitenoise.mp3 in Resources */,
+				1FD3A9E92EE7F3CB007D380C /* forest.mp3 in Resources */,
+				1FD3A9EA2EE7F3CB007D380C /* coffeeshop.mp3 in Resources */,
+				1FD3A9EB2EE7F3CB007D380C /* lofi.mp3 in Resources */,
+				1FD3A9EC2EE7F3CB007D380C /* ocean.mp3 in Resources */,
+				1FD3A9ED2EE7F3CB007D380C /* rain.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
