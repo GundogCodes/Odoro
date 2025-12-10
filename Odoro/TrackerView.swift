@@ -1,4 +1,156 @@
 import SwiftUI
+internal import Combine
+
+// MARK: - Tracker Background
+struct TrackerBackground: View {
+    @Environment(\.colorScheme) var colorScheme
+    
+    @State private var wave1FromTop: Bool = false
+    @State private var wave2FromTop: Bool = true
+    @State private var wave3FromTop: Bool = false
+    @State private var speedMultiplier1: Double = 1.0
+    @State private var speedMultiplier2: Double = 1.0
+    @State private var speedMultiplier3: Double = 1.0
+    
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            
+            GeometryReader { geo in
+                ZStack {
+                    if colorScheme == .dark {
+                        // Deep purple/blue base for dark mode
+                        Color(red: 0.12, green: 0.10, blue: 0.25)
+                        
+                        // Wave 1 - indigo
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave1FromTop,
+                            baseHeight: 0.7,
+                            amplitude: 45,
+                            frequency: 0.8,
+                            speed: 0.5 * speedMultiplier1,
+                            color: Color(red: 0.25, green: 0.20, blue: 0.5)
+                        )
+                        
+                        // Wave 2 - purple
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave2FromTop,
+                            baseHeight: 0.55,
+                            amplitude: 40,
+                            frequency: 1.0,
+                            speed: 0.65 * speedMultiplier2,
+                            color: Color(red: 0.4, green: 0.25, blue: 0.65)
+                        )
+                        
+                        // Wave 3 - violet/pink accent
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave3FromTop,
+                            baseHeight: 0.35,
+                            amplitude: 35,
+                            frequency: 1.2,
+                            speed: 0.8 * speedMultiplier3,
+                            color: Color(red: 0.55, green: 0.3, blue: 0.75)
+                        )
+                        
+                    } else {
+                        // Soft blue/lavender base for light mode
+                        Color(red: 0.6, green: 0.7, blue: 0.9)
+                        
+                        // Wave 1 - blue
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave1FromTop,
+                            baseHeight: 0.7,
+                            amplitude: 50,
+                            frequency: 0.85,
+                            speed: 0.5 * speedMultiplier1,
+                            color: Color(red: 0.4, green: 0.55, blue: 0.85)
+                        )
+                        
+                        // Wave 2 - indigo
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave2FromTop,
+                            baseHeight: 0.55,
+                            amplitude: 45,
+                            frequency: 1.05,
+                            speed: 0.65 * speedMultiplier2,
+                            color: Color(red: 0.5, green: 0.45, blue: 0.8)
+                        )
+                        
+                        // Wave 3 - purple
+                        HorizontalFluidWave(
+                            time: time,
+                            fromTop: wave3FromTop,
+                            baseHeight: 0.35,
+                            amplitude: 40,
+                            frequency: 1.25,
+                            speed: 0.8 * speedMultiplier3,
+                            color: Color(red: 0.6, green: 0.4, blue: 0.75)
+                        )
+                    }
+                }
+                .drawingGroup()
+            }
+        }
+        .onAppear {
+            wave1FromTop = Bool.random()
+            wave2FromTop = Bool.random()
+            wave3FromTop = Bool.random()
+            
+            speedMultiplier1 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
+            speedMultiplier2 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
+            speedMultiplier3 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+// MARK: - Orientation Manager
+class OrientationManager: ObservableObject {
+    static let shared = OrientationManager()
+    @Published var isLocked = false
+    
+    func lockToPortrait() {
+        guard !isLocked else { return }
+        isLocked = true
+        forceOrientationUpdate()
+    }
+    
+    func unlock() {
+        guard isLocked else { return }
+        isLocked = false
+        forceOrientationUpdate()
+    }
+    
+    private func forceOrientationUpdate() {
+        // Small delay to ensure state is updated before requesting geometry change
+        DispatchQueue.main.async {
+            if #available(iOS 16.0, *) {
+                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+                let orientations: UIInterfaceOrientationMask = self.isLocked ? .portrait : .all
+                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: orientations)) { error in
+                    // Silently handle error
+                }
+            }
+            // Trigger re-evaluation of supported orientations
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootVC = windowScene.windows.first?.rootViewController {
+                rootVC.setNeedsUpdateOfSupportedInterfaceOrientations()
+            }
+        }
+    }
+}
+
+// MARK: - App Delegate for Orientation Control
+class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        return OrientationManager.shared.isLocked ? .portrait : .all
+    }
+}
 
 // MARK: - Tracker Home Screen
 struct TrackerView: View {
@@ -7,17 +159,26 @@ struct TrackerView: View {
     @ObservedObject var stats: StatsManager
     @ObservedObject var settings: AppSettings
     
+    // Access the shared orientation manager directly
+    private var orientationManager: OrientationManager { OrientationManager.shared }
+    
+    // Animation states
+    @State private var showHeader = false
+    @State private var showLockInButton = false
+    @State private var showStatsCard = false
+    @State private var showHabitsCard = false
+    
     var body: some View {
         ZStack {
-            // Animated wave background
-            AnimatedMeshBackground()
+            // Blue/purple wave background for tracker
+            TrackerBackground()
             
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
                     // Header with logo and title - left aligned
                     HStack(spacing: 10) {
                         if colorScheme == .light {
-                            Image("logo2")
+                            Image("logo4")
                                 .resizable()
                                 .scaledToFit()
                                 .frame(width: 32, height: 32)
@@ -27,13 +188,8 @@ struct TrackerView: View {
                                         .stroke(Color.white, lineWidth: 2)
                                 )
                                 .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 2)
-                            
-                            Text("Tracker")
-                                .font(.system(size: 28, weight: .bold, design: .rounded))
-                                .foregroundColor(.white)
-                                .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
-                        } else if colorScheme == .dark {
-                            Image("logo3")
+                        } else {
+                            Image("logo5")
                                 .resizable()
                                 .scaledToFit()
                                 .frame(width: 32, height: 32)
@@ -43,18 +199,17 @@ struct TrackerView: View {
                                         .stroke(Color.white, lineWidth: 2)
                                 )
                                 .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 2)
-                            
-                            Text("Tracker")
-                                .font(.system(size: 28, weight: .bold, design: .rounded))
-                                .foregroundColor(.white)
-                                .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
-                            
                         }
                         
-                        
-                        
+                        Text("Tracker")
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
                     }
                     .padding(.top, 60)
+                    .opacity(showHeader ? 1 : 0)
+                    .offset(y: showHeader ? 0 : 20)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showHeader)
                     
                     // Lock In Now button - left aligned text, clear background
                     Button {
@@ -85,17 +240,51 @@ struct TrackerView: View {
                                 )
                         )
                     }
+                    .opacity(showLockInButton ? 1 : 0)
+                    .offset(y: showLockInButton ? 0 : 20)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: showLockInButton)
                     
                     // Today's stats card
                     TodayStatsCard(stats: stats)
+                        .opacity(showStatsCard ? 1 : 0)
+                        .offset(y: showStatsCard ? 0 : 20)
+                        .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: showStatsCard)
                     
                     // Habits section
                     HabitsPlaceholderCard()
+                        .opacity(showHabitsCard ? 1 : 0)
+                        .offset(y: showHabitsCard ? 0 : 20)
+                        .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: showHabitsCard)
                     
                     Spacer(minLength: 40)
                 }
                 .padding(.horizontal, 20)
             }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 50)
+                .onEnded { value in
+                    // Swipe left to go to picker
+                    if value.translation.width < -50 && abs(value.translation.height) < 100 {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showTimer = true
+                        }
+                    }
+                }
+        )
+        .onAppear {
+            // Lock to portrait when tracker appears
+            orientationManager.lockToPortrait()
+            
+            // Trigger animations with slight delays
+            showHeader = false
+            showLockInButton = false
+            showStatsCard = false
+            showHabitsCard = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showHeader = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { showLockInButton = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { showStatsCard = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { showHabitsCard = true }
         }
     }
 }

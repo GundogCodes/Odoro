@@ -1288,22 +1288,6 @@ struct SettingsPanel: View {
                 .padding(16)
                 .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
             }
-            
-            // Note about audio files
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "info.circle.fill")
-                        .foregroundColor(.blue)
-                    Text("Audio Files")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                }
-                Text("Add audio files to your app bundle with these exact names: rain, lofi, whitenoise, coffeeshop, forest, ocean (.mp3, .m4a, or .wav)")
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.6))
-            }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.blue.opacity(0.15)))
         }
     }
     
@@ -1650,8 +1634,6 @@ struct PickerScreen: View {
     @State private var showButton = false
     @State private var showStats = false
     
-    @Environment(\.colorScheme) var colorScheme
-    
     @Environment(\.verticalSizeClass) var verticalSizeClass
     
     var isLandscape: Bool {
@@ -1662,31 +1644,18 @@ struct PickerScreen: View {
         ZStack {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: isLandscape ? 12 : 20) {
-                    if colorScheme == .light {
-                        Image("logo2")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
-                            .cornerRadius(10)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.white, lineWidth: 3)
-                            )
-                            .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
-                            .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
-                    } else if colorScheme == .dark {
-                        Image("logo3")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
-                            .cornerRadius(10)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.white, lineWidth: 3)
-                            )
-                            .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
-                            .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
-                    }
+                    Image("logo2")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
+                        .cornerRadius(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white, lineWidth: 3)
+                        )
+                        .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
+                        .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
+                    
                     if !choicesMade {
                         HStack {
                             VStack(spacing: isLandscape ? 4 : 8) {
@@ -1819,6 +1788,17 @@ struct PickerScreen: View {
                 Spacer()
             }
         }
+        .gesture(
+            DragGesture(minimumDistance: 50)
+                .onEnded { value in
+                    // Swipe right to go back to tracker
+                    if value.translation.width > 50 && abs(value.translation.height) < 100 {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            showTimerFlow = false
+                        }
+                    }
+                }
+        )
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showImage = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { showPickers = true }
@@ -2067,6 +2047,8 @@ struct TimerScreen: View {
                                     if cameraManager.isRecording {
                                         cameraManager.stopRecording()
                                     }
+                                    // Reset timer so new picker values will be used
+                                    resetTimer()
                                     choicesMade = false
                                 } label: {
                                     Image(systemName: "xmark")
@@ -2193,6 +2175,18 @@ struct TimerScreen: View {
         } message: {
             Text(timelapseMessage ?? "")
         }
+        .onChange(of: studyTime) { _, newValue in
+            // Update timer if not running and in study mode
+            if !timerRunning && isStudy {
+                secondsLeft = newValue * 60
+            }
+        }
+        .onChange(of: restTime) { _, newValue in
+            // Update timer if not running and in rest mode
+            if !timerRunning && !isStudy && !isLongBreak {
+                secondsLeft = newValue * 60
+            }
+        }
         .onDisappear {
             cameraManager.cleanup()
             soundManager.stop()
@@ -2219,14 +2213,14 @@ struct TimerScreen: View {
             timerStartTime = Date()
             scheduleTimerEndNotification()
             
-            // Start focus sound if study time
-            if isStudy && soundManager.currentSound != nil {
+            // Start focus sound if study time and not already playing
+            if isStudy && soundManager.currentSound != nil && !soundManager.isPlaying {
                 soundManager.play()
             }
         } else {
             cancelScheduledNotifications()
             timerStartTime = nil
-            soundManager.pause()
+            // Don't pause music when timer is paused - let it keep playing
         }
     }
     
@@ -2462,6 +2456,16 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.25), value: choicesMade)
         .onAppear {
             requestNotificationPermission()
+        }
+        .onChange(of: showTimerFlow) { oldValue, newValue in
+            // Control orientation based on which screen is showing
+            if newValue {
+                // Leaving tracker -> unlock rotation
+                OrientationManager.shared.unlock()
+            } else {
+                // Returning to tracker -> lock to portrait
+                OrientationManager.shared.lockToPortrait()
+            }
         }
     }
 
