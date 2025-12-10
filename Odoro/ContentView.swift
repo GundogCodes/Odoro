@@ -1628,7 +1628,7 @@ struct PickerScreen: View {
     @Binding var showTimerFlow: Bool
     @ObservedObject var stats: StatsManager
     @ObservedObject var settings: AppSettings
-    
+    @Environment(\.colorScheme) var colorScheme
     @State private var showImage = false
     @State private var showPickers = false
     @State private var showButton = false
@@ -1644,18 +1644,32 @@ struct PickerScreen: View {
         ZStack {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: isLandscape ? 12 : 20) {
-                    Image("logo2")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
-                        .cornerRadius(10)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.white, lineWidth: 3)
-                        )
-                        .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
-                        .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
-                    
+                    if colorScheme == .light {
+                        Image("logo2")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white, lineWidth: 3)
+                            )
+                            .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
+                    } else {
+                        Image("logo3")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white, lineWidth: 3)
+                            )
+                            .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
+                            .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
+                    }
+
                     if !choicesMade {
                         HStack {
                             VStack(spacing: isLandscape ? 4 : 8) {
