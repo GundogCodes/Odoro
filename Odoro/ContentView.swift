@@ -12,6 +12,7 @@ import AudioToolbox
 import UserNotifications
 import Photos
 import CoreMotion
+import ActivityKit
 
 // MARK: - Motion Manager for Gyroscope
 class MotionManager: ObservableObject {
@@ -356,35 +357,28 @@ class FocusSoundManager: ObservableObject {
     func play() {
         guard let sound = currentSound else { return }
         
-        // Try multiple audio file extensions
         let extensions = ["mp3", "m4a", "wav", "aac"]
         var url: URL?
         
         for ext in extensions {
             if let foundURL = Bundle.main.url(forResource: sound.fileName, withExtension: ext) {
                 url = foundURL
-                print("Found sound file: \(sound.fileName).\(ext)")
                 break
             }
         }
         
-        guard let audioURL = url else {
-            print("Sound file not found: \(sound.fileName) (tried: \(extensions.joined(separator: ", ")))")
-            return
-        }
+        guard let audioURL = url else { return }
         
         do {
-            // Re-setup audio session to ensure it's active
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true)
             
             audioPlayer = try AVAudioPlayer(contentsOf: audioURL)
-            audioPlayer?.numberOfLoops = -1 // Loop forever
+            audioPlayer?.numberOfLoops = -1
             audioPlayer?.volume = volume
             audioPlayer?.prepareToPlay()
             audioPlayer?.play()
             isPlaying = true
-            print("Playing sound: \(sound.displayName) at volume \(volume)")
         } catch {
             print("Error playing sound: \(error)")
         }
@@ -404,7 +398,6 @@ class FocusSoundManager: ObservableObject {
     func setSound(_ sound: FocusSound?) {
         stop()
         currentSound = sound
-        // Automatically play when a sound is selected
         if sound != nil {
             play()
         }
@@ -413,7 +406,6 @@ class FocusSoundManager: ObservableObject {
 
 // MARK: - App Settings
 class AppSettings: ObservableObject {
-    // Default colors
     static let defaultStudyColor: Color = .purple
     static let defaultRestColor: Color = .red
     static let defaultStudyBackgroundColor: Color = Color.green.opacity(0.3)
@@ -483,6 +475,7 @@ class AppSettings: ObservableObject {
     }
 }
 
+
 // MARK: - Camera Manager for Timelapse
 class CameraManager: NSObject, ObservableObject {
     @Published var isRecording = false
@@ -498,7 +491,6 @@ class CameraManager: NSObject, ObservableObject {
     private let videoOutputQueue = DispatchQueue(label: "videoOutputQueue")
     private let writerQueue = DispatchQueue(label: "writerQueue")
     
-    // Streaming video writer
     private var assetWriter: AVAssetWriter?
     private var assetWriterInput: AVAssetWriterInput?
     private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
@@ -540,7 +532,6 @@ class CameraManager: NSObject, ObservableObject {
         
         guard let frontCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
               let input = try? AVCaptureDeviceInput(device: frontCamera) else {
-            print("Failed to access front camera")
             return
         }
         
@@ -549,9 +540,7 @@ class CameraManager: NSObject, ObservableObject {
         }
         
         videoOutput = AVCaptureVideoDataOutput()
-        videoOutput?.videoSettings = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ]
+        videoOutput?.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         videoOutput?.setSampleBufferDelegate(self, queue: videoOutputQueue)
         videoOutput?.alwaysDiscardsLateVideoFrames = true
         
@@ -577,7 +566,6 @@ class CameraManager: NSObject, ObservableObject {
             self.videoSize = nil
         }
         
-        // Start capture timer
         captureTimer = Timer.scheduledTimer(withTimeInterval: captureInterval, repeats: true) { [weak self] _ in
             self?.shouldCaptureFrame = true
         }
@@ -592,10 +580,7 @@ class CameraManager: NSObject, ObservableObject {
             self.outputURL = url
             self.videoSize = size
             
-            guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else {
-                print("Failed to create asset writer")
-                return
-            }
+            guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { return }
             
             let videoSettings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,
@@ -640,11 +625,8 @@ class CameraManager: NSObject, ObservableObject {
                   self.isWriterReady,
                   let writerInput = self.assetWriterInput,
                   let adaptor = self.pixelBufferAdaptor,
-                  writerInput.isReadyForMoreMediaData else {
-                return
-            }
+                  writerInput.isReadyForMoreMediaData else { return }
             
-            // 30fps playback for timelapse
             let frameDuration = CMTime(value: 1, timescale: 30)
             let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(self.frameCount))
             
@@ -684,13 +666,11 @@ class CameraManager: NSObject, ObservableObject {
                 if writer.status == .completed, let url = self.outputURL {
                     self.saveToPhotoLibrary(url: url)
                 } else {
-                    print("Writer failed: \(writer.error?.localizedDescription ?? "unknown")")
                     DispatchQueue.main.async {
                         self.onTimelapseComplete?(nil)
                     }
                 }
                 
-                // Cleanup
                 self.assetWriter = nil
                 self.assetWriterInput = nil
                 self.pixelBufferAdaptor = nil
@@ -717,24 +697,20 @@ class CameraManager: NSObject, ObservableObject {
     }
     
     func cleanup() {
-        // Stop recording first if active
         captureTimer?.invalidate()
         captureTimer = nil
         
-        // Immediately update state on main thread
         DispatchQueue.main.async {
             self.isRecording = false
             self.previewImage = nil
         }
         
-        // Stop capture session synchronously to ensure camera light goes off
         sessionQueue.sync { [weak self] in
             self?.captureSession?.stopRunning()
             self?.captureSession = nil
             self?.videoOutput = nil
         }
         
-        // Clean up writer if still active
         writerQueue.async { [weak self] in
             self?.assetWriter?.cancelWriting()
             self?.assetWriter = nil
@@ -744,7 +720,6 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
     
-    // Call this to stop and save timelapse before cleanup
     func stopAndSave(completion: (() -> Void)? = nil) {
         guard isRecording else {
             completion?()
@@ -770,22 +745,18 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         let image = UIImage(cgImage: cgImage)
         
         DispatchQueue.main.async {
-            // Always update preview for smooth video feed
             self.previewImage = image
         }
         
-        // Capture frame for timelapse if recording and timer triggered
         if isRecording && shouldCaptureFrame {
             shouldCaptureFrame = false
             
-            // Setup writer on first frame to get correct size
             if !isWriterReady && videoSize == nil {
                 let width = CVPixelBufferGetWidth(pixelBuffer)
                 let height = CVPixelBufferGetHeight(pixelBuffer)
                 setupAssetWriter(size: CGSize(width: width, height: height))
             }
             
-            // Copy pixel buffer and append to video
             if isWriterReady {
                 var copiedBuffer: CVPixelBuffer?
                 let width = CVPixelBufferGetWidth(pixelBuffer)
@@ -829,42 +800,29 @@ struct DraggableCameraPreview: View {
     
     @Environment(\.verticalSizeClass) var verticalSizeClass
     
-    var isLandscape: Bool {
-        verticalSizeClass == .compact
-    }
+    var isLandscape: Bool { verticalSizeClass == .compact }
     
     var rotationAngle: Double {
-        if !isLandscape {
-            return 0
-        }
-        // Check actual device orientation for correct rotation
+        if !isLandscape { return 0 }
         switch deviceOrientation {
-        case .landscapeLeft:
-            return -90
-        case .landscapeRight:
-            return 90
-        default:
-            return -90 // Default landscape rotation
+        case .landscapeLeft: return -90
+        case .landscapeRight: return 90
+        default: return -90
         }
     }
     
     var body: some View {
         ZStack {
-            // Main container with glass effect
             RoundedRectangle(cornerRadius: 16)
                 .fill(.ultraThinMaterial)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            LinearGradient(colors: [.white.opacity(0.6), .white.opacity(0.2)],
-                                          startPoint: .topLeading, endPoint: .bottomTrailing),
-                            lineWidth: 1.5
-                        )
+                        .stroke(LinearGradient(colors: [.white.opacity(0.6), .white.opacity(0.2)],
+                                              startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.5)
                 )
                 .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
             
             VStack(spacing: 0) {
-                // Camera viewfinder
                 ZStack {
                     if let image = cameraManager.previewImage {
                         Image(uiImage: image)
@@ -877,13 +835,9 @@ struct DraggableCameraPreview: View {
                         Rectangle()
                             .fill(.black)
                             .frame(width: 130, height: 170)
-                            .overlay(
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            )
+                            .overlay(ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white)))
                     }
                     
-                    // Viewfinder corner brackets
                     VStack {
                         HStack {
                             ViewfinderCorner(rotation: 0)
@@ -900,21 +854,14 @@ struct DraggableCameraPreview: View {
                     .padding(8)
                     .frame(width: 130, height: 170)
                     
-                    // Recording indicator overlay
                     if cameraManager.isRecording {
                         VStack {
                             HStack {
                                 HStack(spacing: 4) {
-                                    Circle()
-                                        .fill(.red)
-                                        .frame(width: 8, height: 8)
-                                        .shadow(color: .red, radius: 3)
-                                    Text("REC")
-                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                        .foregroundColor(.white)
+                                    Circle().fill(.red).frame(width: 8, height: 8).shadow(color: .red, radius: 3)
+                                    Text("REC").font(.system(size: 10, weight: .bold, design: .monospaced)).foregroundColor(.white)
                                 }
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
+                                .padding(.horizontal, 6).padding(.vertical, 3)
                                 .background(Capsule().fill(.black.opacity(0.6)))
                                 
                                 Spacer()
@@ -922,32 +869,25 @@ struct DraggableCameraPreview: View {
                                 Text(formatDuration(recordingDuration))
                                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                                     .foregroundColor(.white)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
+                                    .padding(.horizontal, 6).padding(.vertical, 3)
                                     .background(Capsule().fill(.black.opacity(0.6)))
                             }
                             .padding(6)
-                            
                             Spacer()
                         }
                         .frame(width: 130, height: 170)
                     }
                     
-                    // Hide button
                     VStack {
                         Spacer()
                         HStack {
                             Spacer()
                             Button {
-                                withAnimation(.spring(response: 0.3)) {
-                                    isHidden = true
-                                }
+                                withAnimation(.spring(response: 0.3)) { isHidden = true }
                             } label: {
                                 Image(systemName: "eye.slash.fill")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.white)
-                                    .padding(6)
-                                    .background(Circle().fill(.black.opacity(0.5)))
+                                    .font(.system(size: 12)).foregroundColor(.white)
+                                    .padding(6).background(Circle().fill(.black.opacity(0.5)))
                             }
                             .padding(6)
                         }
@@ -974,9 +914,7 @@ struct DraggableCameraPreview: View {
             UIDevice.current.beginGeneratingDeviceOrientationNotifications()
             deviceOrientation = UIDevice.current.orientation
         }
-        .onDisappear {
-            recordingTimer?.invalidate()
-        }
+        .onDisappear { recordingTimer?.invalidate() }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             let newOrientation = UIDevice.current.orientation
             if newOrientation.isLandscape || newOrientation.isPortrait {
@@ -996,20 +934,15 @@ struct DraggableCameraPreview: View {
     private func startRecordingTimer() {
         recordingTimer?.invalidate()
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            if cameraManager.isRecording {
-                recordingDuration += 1
-            }
+            if cameraManager.isRecording { recordingDuration += 1 }
         }
     }
     
     private func formatDuration(_ seconds: Int) -> String {
-        let mins = seconds / 60
-        let secs = seconds % 60
-        return String(format: "%02d:%02d", mins, secs)
+        String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
 }
 
-// Viewfinder corner bracket
 struct ViewfinderCorner: View {
     let rotation: Double
     
@@ -1062,54 +995,38 @@ struct SettingsPanel: View {
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                // Header
                 HStack {
-                    Text("Settings")
-                        .font(.title2.bold())
-                        .foregroundColor(.white)
+                    Text("Settings").font(.title2.bold()).foregroundColor(.white)
                     Spacer()
                     Button {
                         withAnimation(.spring(response: 0.4)) { isPresented = false }
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(.white.opacity(0.7))
+                        Image(systemName: "xmark.circle.fill").font(.title2).foregroundColor(.white.opacity(0.7))
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 24)
-                .padding(.bottom, 16)
+                .padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 16)
                 
-                // Tab Picker
                 Picker("", selection: $selectedTab) {
                     Text("General").tag(0)
                     Text("Sounds").tag(1)
                     Text("Tips").tag(2)
                 }
                 .pickerStyle(.segmented)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 16)
+                .padding(.horizontal, 24).padding(.bottom, 16)
                 
-                // Content
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 20) {
-                        if selectedTab == 0 {
-                            generalSettings
-                        } else if selectedTab == 1 {
-                            soundSettings
-                        } else {
-                            tipsSection
-                        }
+                        if selectedTab == 0 { generalSettings }
+                        else if selectedTab == 1 { soundSettings }
+                        else { tipsSection }
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
+                    .padding(.horizontal, 24).padding(.bottom, 24)
                 }
             }
             .frame(maxWidth: 380, maxHeight: 520)
             .background(
                 ZStack {
                     RoundedRectangle(cornerRadius: 28).fill(.ultraThinMaterial)
-                    // Dark tint for better text contrast
                     RoundedRectangle(cornerRadius: 28).fill(Color.black.opacity(0.35))
                     RoundedRectangle(cornerRadius: 28)
                         .fill(LinearGradient(colors: [.purple.opacity(0.25), .blue.opacity(0.15)],
@@ -1126,220 +1043,140 @@ struct SettingsPanel: View {
     
     var generalSettings: some View {
         VStack(spacing: 20) {
-            // Fill Colors
             VStack(alignment: .leading, spacing: 12) {
-                Text("Fill Colors")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                
+                Text("Fill Colors").font(.headline).foregroundColor(.white)
                 HStack {
-                    Text("Lock In Fill")
-                        .foregroundColor(.white.opacity(0.8))
+                    Text("Lock In Fill").foregroundColor(.white.opacity(0.8))
                     Spacer()
-                    ColorPicker("", selection: $settings.studyColor, supportsOpacity: false)
-                        .labelsHidden()
+                    ColorPicker("", selection: $settings.studyColor, supportsOpacity: false).labelsHidden()
                 }
-                
                 HStack {
-                    Text("Chill Fill")
-                        .foregroundColor(.white.opacity(0.8))
+                    Text("Chill Fill").foregroundColor(.white.opacity(0.8))
                     Spacer()
-                    ColorPicker("", selection: $settings.restColor, supportsOpacity: false)
-                        .labelsHidden()
+                    ColorPicker("", selection: $settings.restColor, supportsOpacity: false).labelsHidden()
                 }
             }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
+            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
             
-            // Background Colors
             VStack(alignment: .leading, spacing: 12) {
-                Text("Background Colors")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                
+                Text("Background Colors").font(.headline).foregroundColor(.white)
                 HStack {
-                    Text("Lock In Background")
-                        .foregroundColor(.white.opacity(0.8))
+                    Text("Lock In Background").foregroundColor(.white.opacity(0.8))
                     Spacer()
-                    ColorPicker("", selection: $settings.studyBackgroundColor, supportsOpacity: true)
-                        .labelsHidden()
+                    ColorPicker("", selection: $settings.studyBackgroundColor, supportsOpacity: true).labelsHidden()
                 }
-                
                 HStack {
-                    Text("Chill Background")
-                        .foregroundColor(.white.opacity(0.8))
+                    Text("Chill Background").foregroundColor(.white.opacity(0.8))
                     Spacer()
-                    ColorPicker("", selection: $settings.restBackgroundColor, supportsOpacity: true)
-                        .labelsHidden()
+                    ColorPicker("", selection: $settings.restBackgroundColor, supportsOpacity: true).labelsHidden()
                 }
             }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
+            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
             
-            // Reset to Defaults Button
             Button {
-                withAnimation {
-                    settings.resetToDefaults()
-                }
+                withAnimation { settings.resetToDefaults() }
             } label: {
                 HStack {
                     Image(systemName: "arrow.counterclockwise")
                     Text("Reset Colors to Default")
                 }
-                .font(.subheadline.bold())
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(12)
+                .font(.subheadline.bold()).foregroundColor(.white)
+                .frame(maxWidth: .infinity).padding(12)
                 .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.15)))
             }
             
-            // Long Chill Settings
             VStack(alignment: .leading, spacing: 12) {
                 Toggle(isOn: $settings.longBreakEnabled) {
-                    Text("Long Chill")
-                        .font(.headline)
-                        .foregroundColor(.white)
+                    Text("Long Chill").font(.headline).foregroundColor(.white)
                 }
                 .tint(.orange)
                 
-                Text("Take an extended chill session after completing multiple lock in sessions. This follows the Pomodoro technique to prevent burnout.")
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.6))
+                Text("Take an extended chill session after completing multiple lock in sessions.")
+                    .font(.caption).foregroundColor(.white.opacity(0.6))
                 
                 if settings.longBreakEnabled {
                     HStack {
-                        Text("After")
-                            .foregroundColor(.white.opacity(0.8))
+                        Text("After").foregroundColor(.white.opacity(0.8))
                         Picker("", selection: $settings.sessionsUntilLongBreak) {
-                            ForEach(2...8, id: \.self) { num in
-                                Text("\(num) sessions").tag(num)
-                            }
+                            ForEach(2...8, id: \.self) { Text("\($0) sessions").tag($0) }
                         }
-                        .pickerStyle(.menu)
-                        .tint(.white)
+                        .pickerStyle(.menu).tint(.white)
                     }
-                    
                     HStack {
-                        Text("Duration")
-                            .foregroundColor(.white.opacity(0.8))
+                        Text("Duration").foregroundColor(.white.opacity(0.8))
                         Picker("", selection: $settings.longBreakTime) {
-                            ForEach([10, 15, 20, 25, 30], id: \.self) { num in
-                                Text("\(num) min").tag(num)
-                            }
+                            ForEach([10, 15, 20, 25, 30], id: \.self) { Text("\($0) min").tag($0) }
                         }
-                        .pickerStyle(.menu)
-                        .tint(.white)
+                        .pickerStyle(.menu).tint(.white)
                     }
                 }
             }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
+            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
             
-            // Mute Toggle
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Mute Sound")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    Text("Silence the ding")
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
+                    Text("Mute Sound").font(.headline).foregroundColor(.white)
+                    Text("Silence the ding").font(.caption).foregroundColor(.white.opacity(0.6))
                 }
                 Spacer()
-                Toggle("", isOn: $settings.isMuted)
-                    .labelsHidden()
-                    .tint(.orange)
+                Toggle("", isOn: $settings.isMuted).labelsHidden().tint(.orange)
             }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
+            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
         }
     }
     
     var soundSettings: some View {
         VStack(spacing: 20) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Focus Sounds")
-                    .font(.headline)
-                    .foregroundColor(.white)
+                Text("Focus Sounds").font(.headline).foregroundColor(.white)
+                Text("Plays during study, pauses on break").font(.caption).foregroundColor(.white.opacity(0.6))
                 
-                Text("Plays during study, pauses on break")
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.6))
-                
-                // Sound options
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     ForEach(FocusSoundManager.FocusSound.allCases, id: \.rawValue) { sound in
                         let isAvailable = soundFileExists(sound)
                         Button {
-                            if soundManager.currentSound == sound {
-                                soundManager.setSound(nil)
-                            } else {
-                                soundManager.setSound(sound)
-                            }
+                            if soundManager.currentSound == sound { soundManager.setSound(nil) }
+                            else { soundManager.setSound(sound) }
                         } label: {
                             HStack {
-                                Text(sound.displayName)
-                                    .font(.subheadline.bold())
+                                Text(sound.displayName).font(.subheadline.bold())
                                 if !isAvailable {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .font(.caption2)
-                                        .foregroundColor(.yellow)
+                                    Image(systemName: "exclamationmark.triangle.fill").font(.caption2).foregroundColor(.yellow)
                                 }
                             }
                             .foregroundColor(isAvailable ? .white : .white.opacity(0.5))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(soundManager.currentSound == sound ? .blue.opacity(0.5) : .white.opacity(0.15))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(soundManager.currentSound == sound ? .blue : .clear, lineWidth: 2)
-                            )
+                            .frame(maxWidth: .infinity).padding(.vertical, 12)
+                            .background(RoundedRectangle(cornerRadius: 12)
+                                .fill(soundManager.currentSound == sound ? .blue.opacity(0.5) : .white.opacity(0.15)))
+                            .overlay(RoundedRectangle(cornerRadius: 12)
+                                .stroke(soundManager.currentSound == sound ? .blue : .clear, lineWidth: 2))
                         }
                         .disabled(!isAvailable)
                     }
                 }
                 
-                // None option
                 Button {
                     soundManager.setSound(nil)
                 } label: {
-                    Text("🔇 None")
-                        .font(.subheadline.bold())
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(soundManager.currentSound == nil ? .blue.opacity(0.5) : .white.opacity(0.15))
-                        )
+                    Text("🔇 None").font(.subheadline.bold()).foregroundColor(.white)
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 12)
+                            .fill(soundManager.currentSound == nil ? .blue.opacity(0.5) : .white.opacity(0.15)))
                 }
             }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
+            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
             
-            // Volume
             if soundManager.currentSound != nil {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Volume")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    
+                    Text("Volume").font(.headline).foregroundColor(.white)
                     HStack {
-                        Image(systemName: "speaker.fill")
-                            .foregroundColor(.white.opacity(0.6))
-                        Slider(value: $soundManager.volume, in: 0...1)
-                            .tint(.blue)
-                        Image(systemName: "speaker.wave.3.fill")
-                            .foregroundColor(.white.opacity(0.6))
+                        Image(systemName: "speaker.fill").foregroundColor(.white.opacity(0.6))
+                        Slider(value: $soundManager.volume, in: 0...1).tint(.blue)
+                        Image(systemName: "speaker.wave.3.fill").foregroundColor(.white.opacity(0.6))
                     }
                 }
-                .padding(16)
-                .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
+                .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
             }
-            
         }
     }
     
@@ -1347,60 +1184,39 @@ struct SettingsPanel: View {
         VStack(spacing: 20) {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Image(systemName: "lightbulb.fill")
-                        .foregroundColor(.yellow)
-                    Text("Study Tip")
-                        .font(.headline)
-                        .foregroundColor(.white)
+                    Image(systemName: "lightbulb.fill").foregroundColor(.yellow)
+                    Text("Study Tip").font(.headline).foregroundColor(.white)
                 }
-                
-                Text(currentTip)
-                    .font(.body)
-                    .foregroundColor(.white.opacity(0.9))
-                    .fixedSize(horizontal: false, vertical: true)
-                
+                Text(currentTip).font(.body).foregroundColor(.white.opacity(0.9)).fixedSize(horizontal: false, vertical: true)
                 Button {
-                    withAnimation {
-                        currentTip = StudyTips.randomTip()
-                    }
+                    withAnimation { currentTip = StudyTips.randomTip() }
                 } label: {
                     HStack {
                         Image(systemName: "arrow.clockwise")
                         Text("New Tip")
                     }
-                    .font(.subheadline.bold())
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    .font(.subheadline.bold()).foregroundColor(.white)
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
                     .background(RoundedRectangle(cornerRadius: 12).fill(.blue.opacity(0.5)))
                 }
             }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
+            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
             
-            // Quick facts
             VStack(alignment: .leading, spacing: 12) {
-                Text("Quick Facts")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                
+                Text("Quick Facts").font(.headline).foregroundColor(.white)
                 FactRow(icon: "brain.head.profile", text: "Your brain can only focus for 90-120 minutes at a time")
                 FactRow(icon: "clock.fill", text: "The ideal study session is 25-50 minutes")
                 FactRow(icon: "bed.double.fill", text: "Memory consolidation happens during sleep")
                 FactRow(icon: "figure.walk", text: "Walking boosts creativity by up to 60%")
             }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
+            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
         }
     }
     
-    // Helper to check if sound file exists
     func soundFileExists(_ sound: FocusSoundManager.FocusSound) -> Bool {
         let extensions = ["mp3", "m4a", "wav", "aac"]
         for ext in extensions {
-            if Bundle.main.url(forResource: sound.fileName, withExtension: ext) != nil {
-                return true
-            }
+            if Bundle.main.url(forResource: sound.fileName, withExtension: ext) != nil { return true }
         }
         return false
     }
@@ -1412,12 +1228,8 @@ struct FactRow: View {
     
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .foregroundColor(.orange)
-                .frame(width: 24)
-            Text(text)
-                .font(.caption)
-                .foregroundColor(.white.opacity(0.8))
+            Image(systemName: icon).foregroundColor(.orange).frame(width: 24)
+            Text(text).font(.caption).foregroundColor(.white.opacity(0.8))
         }
     }
 }
@@ -1429,7 +1241,6 @@ struct LogoScreen: View {
 
     var body: some View {
         ZStack {
-            // Animated wave background
             AnimatedMeshBackground()
             
             VStack {
@@ -1439,10 +1250,7 @@ struct LogoScreen: View {
                         .scaledToFit()
                         .frame(minWidth: 90, maxWidth:120)
                         .cornerRadius(10)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.white, lineWidth: 6)
-                        )
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white, lineWidth: 6))
                         .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
                         .offset(y: jumpUp ? -20 : 0)
                         .animation(.easeInOut(duration: 0.3), value: jumpUp)
@@ -1479,106 +1287,38 @@ struct LogoScreen: View {
 struct AnimatedMeshBackground: View {
     @Environment(\.colorScheme) var colorScheme
     
-    // Randomized on each load
     @State private var wave1FromTop: Bool = false
     @State private var wave2FromTop: Bool = true
     @State private var wave3FromTop: Bool = false
     @State private var speedMultiplier1: Double = 1.0
     @State private var speedMultiplier2: Double = 1.0
     @State private var speedMultiplier3: Double = 1.0
-    @State private var initialized = false
     
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1/20)) { timeline in  // Reduced to 20fps for backgrounds
+        TimelineView(.animation(minimumInterval: 1/20)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
             
             GeometryReader { geo in
                 ZStack {
                     if colorScheme == .dark {
-                        // Solid dark cyan base
                         Color(red: 0.0, green: 0.45, blue: 0.4)
-                        
-                        // Wave 1 - brighter green
-                        HorizontalFluidWave(
-                            time: time,
-                            fromTop: wave1FromTop,
-                            baseHeight: 0.65,
-                            amplitude: 50,
-                            frequency: 1.0,
-                            speed: 0.6 * speedMultiplier1,
-                            color: Color(red: 0.0, green: 0.7, blue: 0.5)
-                        )
-                        
-                        // Wave 2 - mint
-                        HorizontalFluidWave(
-                            time: time,
-                            fromTop: wave2FromTop,
-                            baseHeight: 0.55,
-                            amplitude: 45,
-                            frequency: 1.2,
-                            speed: 0.8 * speedMultiplier2,
-                            color: Color(red: 0.1, green: 0.85, blue: 0.65)
-                        )
-                        
-                        // Wave 3 - neon green
-                        HorizontalFluidWave(
-                            time: time,
-                            fromTop: wave3FromTop,
-                            baseHeight: 0.4,
-                            amplitude: 40,
-                            frequency: 1.4,
-                            speed: 1.0 * speedMultiplier3,
-                            color: Color(red: 0.2, green: 0.95, blue: 0.6)
-                        )
-                        
+                        HorizontalFluidWave(time: time, fromTop: wave1FromTop, baseHeight: 0.65, amplitude: 50, frequency: 1.0, speed: 0.6 * speedMultiplier1, color: Color(red: 0.0, green: 0.7, blue: 0.5))
+                        HorizontalFluidWave(time: time, fromTop: wave2FromTop, baseHeight: 0.55, amplitude: 45, frequency: 1.2, speed: 0.8 * speedMultiplier2, color: Color(red: 0.1, green: 0.85, blue: 0.65))
+                        HorizontalFluidWave(time: time, fromTop: wave3FromTop, baseHeight: 0.4, amplitude: 40, frequency: 1.4, speed: 1.0 * speedMultiplier3, color: Color(red: 0.2, green: 0.95, blue: 0.6))
                     } else {
-                        // Solid yellow base
                         Color(red: 1.0, green: 0.75, blue: 0.3)
-                        
-                        // Wave 1 - orange
-                        HorizontalFluidWave(
-                            time: time,
-                            fromTop: wave1FromTop,
-                            baseHeight: 0.7,
-                            amplitude: 55,
-                            frequency: 0.9,
-                            speed: 0.55 * speedMultiplier1,
-                            color: Color(red: 1.0, green: 0.55, blue: 0.3)
-                        )
-                        
-                        // Wave 2 - coral/pink
-                        HorizontalFluidWave(
-                            time: time,
-                            fromTop: wave2FromTop,
-                            baseHeight: 0.6,
-                            amplitude: 50,
-                            frequency: 1.1,
-                            speed: 0.75 * speedMultiplier2,
-                            color: Color(red: 1.0, green: 0.45, blue: 0.4)
-                        )
-                        
-                        // Wave 3 - hot pink
-                        HorizontalFluidWave(
-                            time: time,
-                            fromTop: wave3FromTop,
-                            baseHeight: 0.35,
-                            amplitude: 45,
-                            frequency: 1.3,
-                            speed: 0.9 * speedMultiplier3,
-                            color: Color(red: 1.0, green: 0.35, blue: 0.5)
-                        )
+                        HorizontalFluidWave(time: time, fromTop: wave1FromTop, baseHeight: 0.7, amplitude: 55, frequency: 0.9, speed: 0.55 * speedMultiplier1, color: Color(red: 1.0, green: 0.55, blue: 0.3))
+                        HorizontalFluidWave(time: time, fromTop: wave2FromTop, baseHeight: 0.6, amplitude: 50, frequency: 1.1, speed: 0.75 * speedMultiplier2, color: Color(red: 1.0, green: 0.45, blue: 0.4))
+                        HorizontalFluidWave(time: time, fromTop: wave3FromTop, baseHeight: 0.35, amplitude: 45, frequency: 1.3, speed: 0.9 * speedMultiplier3, color: Color(red: 1.0, green: 0.35, blue: 0.5))
                     }
                 }
                 .drawingGroup()
             }
         }
         .onAppear {
-            // Randomize directions and speeds each time screen loads
             wave1FromTop = Bool.random()
             wave2FromTop = Bool.random()
             wave3FromTop = Bool.random()
-            
-            // Subtle speed variations (0.8 to 1.2, some negative for reverse flow)
             speedMultiplier1 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
             speedMultiplier2 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
             speedMultiplier3 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
@@ -1587,7 +1327,6 @@ struct AnimatedMeshBackground: View {
     }
 }
 
-// Simple horizontal fluid wave (top or bottom)
 struct HorizontalFluidWave: View {
     let time: Double
     let fromTop: Bool
@@ -1599,15 +1338,8 @@ struct HorizontalFluidWave: View {
     
     var body: some View {
         GeometryReader { geo in
-            HorizontalFluidShape(
-                time: time,
-                fromTop: fromTop,
-                baseHeight: baseHeight,
-                amplitude: amplitude,
-                frequency: frequency,
-                speed: speed
-            )
-            .fill(color)
+            HorizontalFluidShape(time: time, fromTop: fromTop, baseHeight: baseHeight, amplitude: amplitude, frequency: frequency, speed: speed)
+                .fill(color)
         }
     }
 }
@@ -1625,49 +1357,36 @@ struct HorizontalFluidShape: Shape {
         let steps = 80
         
         if fromTop {
-            // Wave coming from top
             let waveY = rect.height * baseHeight
-            
             path.move(to: CGPoint(x: 0, y: 0))
             path.addLine(to: CGPoint(x: rect.width, y: 0))
             
-            // Wavy bottom edge
             for i in (0...steps).reversed() {
                 let x = (CGFloat(i) / CGFloat(steps)) * rect.width
                 let normalizedX = x / rect.width
-                
                 let wave1 = sin((normalizedX * .pi * 2 * frequency) + (time * speed)) * amplitude
                 let wave2 = sin((normalizedX * .pi * 3.5 * frequency) + (time * speed * 1.3)) * (amplitude * 0.3)
                 let wave3 = cos((normalizedX * .pi * 1.5 * frequency) + (time * speed * 0.7)) * (amplitude * 0.2)
-                
                 let y = waveY + wave1 + wave2 + wave3
                 path.addLine(to: CGPoint(x: x, y: y))
             }
-            
             path.closeSubpath()
         } else {
-            // Wave coming from bottom
             let waveY = rect.height * (1 - baseHeight)
-            
             path.move(to: CGPoint(x: 0, y: rect.height))
             
-            // Wavy top edge
             for i in 0...steps {
                 let x = (CGFloat(i) / CGFloat(steps)) * rect.width
                 let normalizedX = x / rect.width
-                
                 let wave1 = sin((normalizedX * .pi * 2 * frequency) + (time * speed)) * amplitude
                 let wave2 = sin((normalizedX * .pi * 3.5 * frequency) + (time * speed * 1.3)) * (amplitude * 0.3)
                 let wave3 = cos((normalizedX * .pi * 1.5 * frequency) + (time * speed * 0.7)) * (amplitude * 0.2)
-                
                 let y = waveY + wave1 + wave2 + wave3
                 path.addLine(to: CGPoint(x: x, y: y))
             }
-            
             path.addLine(to: CGPoint(x: rect.width, y: rect.height))
             path.closeSubpath()
         }
-        
         return path
     }
 }
@@ -1688,10 +1407,7 @@ struct PickerScreen: View {
     @State private var showStats = false
     
     @Environment(\.verticalSizeClass) var verticalSizeClass
-    
-    var isLandscape: Bool {
-        verticalSizeClass == .compact
-    }
+    var isLandscape: Bool { verticalSizeClass == .compact }
     
     var body: some View {
         ZStack {
@@ -1699,26 +1415,18 @@ struct PickerScreen: View {
                 VStack(spacing: isLandscape ? 12 : 20) {
                     if colorScheme == .light {
                         Image("logo2")
-                            .resizable()
-                            .scaledToFit()
+                            .resizable().scaledToFit()
                             .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
                             .cornerRadius(10)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.white, lineWidth: 3)
-                            )
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white, lineWidth: 3))
                             .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
                             .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
                     } else {
                         Image("logo3")
-                            .resizable()
-                            .scaledToFit()
+                            .resizable().scaledToFit()
                             .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
                             .cornerRadius(10)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.white, lineWidth: 3)
-                            )
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white, lineWidth: 3))
                             .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
                             .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
                     }
@@ -1726,13 +1434,9 @@ struct PickerScreen: View {
                     if !choicesMade {
                         HStack {
                             VStack(spacing: isLandscape ? 4 : 8) {
-                                Text("Lock In Time")
-                                    .font(isLandscape ? .headline : .title).bold()
-                                
+                                Text("Lock In Time").font(isLandscape ? .headline : .title).bold()
                                 Picker("Lock In Time", selection: $studyTime) {
-                                    ForEach(1...60, id: \.self) { num in
-                                        Text("\(num) min").foregroundStyle(.white).bold()
-                                    }
+                                    ForEach(1...60, id: \.self) { Text("\($0) min").foregroundStyle(.white).bold() }
                                 }
                                 .frame(maxWidth: 350, maxHeight: isLandscape ? 120 : nil)
                                 .shadow(radius: 20)
@@ -1744,13 +1448,9 @@ struct PickerScreen: View {
                             .padding(.horizontal)
                             
                             VStack(spacing: isLandscape ? 4 : 8) {
-                                Text("Chill Time")
-                                    .font(isLandscape ? .headline : .title).bold()
-                                
+                                Text("Chill Time").font(isLandscape ? .headline : .title).bold()
                                 Picker("Chill Time", selection: $restTime) {
-                                    ForEach(1...60, id: \.self) { num in
-                                        Text("\(num) min").foregroundStyle(.white).bold()
-                                    }
+                                    ForEach(1...60, id: \.self) { Text("\($0) min").foregroundStyle(.white).bold() }
                                 }
                                 .frame(maxWidth: 350, maxHeight: isLandscape ? 120 : nil)
                                 .shadow(radius: 20)
@@ -1763,40 +1463,32 @@ struct PickerScreen: View {
                         }
                         .offset(y: showPickers ? 0 : UIScreen.main.bounds.height)
                         .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showPickers)
-                            
-                            Button("Done") { choicesMade = true }
-                                .frame(width: 75, height: 30)
-                                .foregroundStyle(.white)
-                                .background(.blue.opacity(0.7))
-                                .clipShape(.capsule)
-                                .shadow(radius: 20)
-                                .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white, lineWidth: 3))
+                        
+                        Button("Done") { choicesMade = true }
+                            .frame(width: 75, height: 30)
+                            .foregroundStyle(.white)
+                            .background(.blue.opacity(0.7))
+                            .clipShape(.capsule)
+                            .shadow(radius: 20)
+                            .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white, lineWidth: 3))
                             .offset(y: showButton ? 0 : UIScreen.main.bounds.height)
                             .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.2), value: showButton)
                         
-                        // Stats Section
                         VStack(spacing: isLandscape ? 10 : 16) {
                             Button {
-                                withAnimation(.spring(response: 0.4)) {
-                                    showStats.toggle()
-                                }
+                                withAnimation(.spring(response: 0.4)) { showStats.toggle() }
                             } label: {
                                 HStack {
                                     Image(systemName: "chart.bar.fill")
-                                    Text("Your Stats")
-                                        .font(.headline)
+                                    Text("Your Stats").font(.headline)
                                     Spacer()
                                     Image(systemName: showStats ? "chevron.up" : "chevron.down")
                                 }
                                 .foregroundColor(.white)
                                 .padding(isLandscape ? 12 : 16)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 16)
-                                        .fill(.ultraThinMaterial)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 16)
-                                                .stroke(.white.opacity(0.3), lineWidth: 1)
-                                        )
+                                    RoundedRectangle(cornerRadius: 16).fill(.ultraThinMaterial)
+                                        .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.3), lineWidth: 1))
                                 )
                             }
                             
@@ -1806,7 +1498,6 @@ struct PickerScreen: View {
                                         PickerStatBox(title: "Today", value: stats.todayFormatted, icon: "sun.max.fill", color: .orange)
                                         PickerStatBox(title: "This Week", value: stats.weekFormatted, icon: "calendar", color: .blue)
                                     }
-                                    
                                     HStack(spacing: 16) {
                                         PickerStatBox(title: "Sessions", value: "\(stats.sessionsCompleted)", icon: "checkmark.circle.fill", color: .green)
                                         PickerStatBox(title: "Streak", value: "\(stats.currentStreak) days", icon: "flame.fill", color: .red)
@@ -1819,37 +1510,28 @@ struct PickerScreen: View {
                         .padding(.top, isLandscape ? 10 : 20)
                         .offset(y: showButton ? 0 : UIScreen.main.bounds.height)
                         .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.3), value: showButton)
+                    }
                 }
+                .padding(.vertical, isLandscape ? 20 : 40)
             }
-            .padding(.vertical, isLandscape ? 20 : 40)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .foregroundStyle(.white)
-        .safeAreaInset(edge: .top) { Color.clear.frame(height: 0) }
-        .background(AnimatedMeshBackground())
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .foregroundStyle(.white)
+            .safeAreaInset(edge: .top) { Color.clear.frame(height: 0) }
+            .background(AnimatedMeshBackground())
             
-            // Back button overlay
             VStack {
                 HStack {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            showTimerFlow = false
-                        }
+                        withAnimation(.easeInOut(duration: 0.25)) { showTimerFlow = false }
                     } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 18, weight: .semibold))
-                            .frame(width: 24, height: 24)
-                            .foregroundColor(.white)
+                            .frame(width: 24, height: 24).foregroundColor(.white)
                             .padding(12)
-                            .background(
-                                Circle()
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
-                            )
+                            .background(Circle().fill(.ultraThinMaterial).overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1)))
                             .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                     }
-                    .padding(.leading, 20)
-                    .padding(.top, 8)
+                    .padding(.leading, 20).padding(.top, 8)
                     Spacer()
                 }
                 Spacer()
@@ -1858,11 +1540,8 @@ struct PickerScreen: View {
         .gesture(
             DragGesture(minimumDistance: 50)
                 .onEnded { value in
-                    // Swipe right to go back to tracker
                     if value.translation.width > 50 && abs(value.translation.height) < 100 {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            showTimerFlow = false
-                        }
+                        withAnimation(.easeInOut(duration: 0.25)) { showTimerFlow = false }
                     }
                 }
         )
@@ -1882,27 +1561,15 @@ struct PickerStatBox: View {
     
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundColor(color)
-            
-            Text(value)
-                .font(.headline)
-                .foregroundColor(.white)
-            
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.white.opacity(0.7))
+            Image(systemName: icon).font(.title3).foregroundColor(color)
+            Text(value).font(.headline).foregroundColor(.white)
+            Text(title).font(.caption).foregroundColor(.white.opacity(0.7))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(.white.opacity(0.2), lineWidth: 1)
-                )
+            RoundedRectangle(cornerRadius: 16).fill(.ultraThinMaterial)
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.2), lineWidth: 1))
         )
     }
 }
@@ -1917,10 +1584,7 @@ struct TimerScreen: View {
     @ObservedObject var soundManager: FocusSoundManager
     
     @Environment(\.verticalSizeClass) var verticalSizeClass
-    
-    var isLandscape: Bool {
-        verticalSizeClass == .compact
-    }
+    var isLandscape: Bool { verticalSizeClass == .compact }
     
     @State private var isStudy = true
     @State private var secondsLeft: Int
@@ -1930,30 +1594,20 @@ struct TimerScreen: View {
     @State private var isLongBreak = false
     @State private var studySecondsThisSession = 0
     
-    // Background handling
     @State private var timerStartTime: Date?
     @State private var backgroundTime: Date?
-    
     @State private var audioPlayer: AVAudioPlayer?
     
-    // Camera/Timelapse
     @StateObject private var cameraManager = CameraManager()
     @State private var showCameraPreview = false
     @State private var timelapseMessage: String?
     @State private var showTimelapseAlert = false
-    
-    // Settings & Stats UI
     @State private var showSettings = false
-    
-    // Auto-hide UI elements
     @State private var showUI = true
     @State private var hideTimer: Timer?
     @State private var cameraPreviewHidden = false
-    
-    // Battery saver mode (dark mode)
     @State private var batterySaverMode = false
     
-    // Motion manager for fluid effect
     @StateObject private var motionManager = MotionManager()
     
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -1969,341 +1623,220 @@ struct TimerScreen: View {
     }
     
     var totalSeconds: Int {
-        if isStudy {
-            return studyTime * 60
-        } else if isLongBreak {
-            return settings.longBreakTime * 60
-        } else {
-            return restTime * 60
-        }
+        if isStudy { return studyTime * 60 }
+        else if isLongBreak { return settings.longBreakTime * 60 }
+        else { return restTime * 60 }
     }
     
-    var progress: CGFloat {
-        CGFloat(totalSeconds - secondsLeft) / CGFloat(totalSeconds)
-    }
+    var progress: CGFloat { CGFloat(totalSeconds - secondsLeft) / CGFloat(totalSeconds) }
     
     var studyGradient: LinearGradient {
-        LinearGradient(colors: [settings.studyColor.opacity(0.7), settings.studyColor],
-                      startPoint: .leading, endPoint: .trailing)
+        LinearGradient(colors: [settings.studyColor.opacity(0.7), settings.studyColor], startPoint: .leading, endPoint: .trailing)
     }
     
     var restGradient: LinearGradient {
-        LinearGradient(colors: [settings.restColor.opacity(0.7), settings.restColor],
-                      startPoint: .leading, endPoint: .trailing)
+        LinearGradient(colors: [settings.restColor.opacity(0.7), settings.restColor], startPoint: .leading, endPoint: .trailing)
     }
     
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // Background - black in battery saver mode
                 if batterySaverMode {
-                    Color.black
-                        .ignoresSafeArea()
+                    Color.black.ignoresSafeArea()
                 } else {
-                    (isStudy ? settings.studyBackgroundColor : settings.restBackgroundColor)
-                        .ignoresSafeArea()
-                    
-                    // Fluid progress fill (only in normal mode, animated only when timer running)
-                    FluidFillView(
-                        progress: progress,
-                        gradient: isStudy ? studyGradient : restGradient,
-                        motionManager: motionManager,
-                        isAnimating: timerRunning
-                    )
+                    (isStudy ? settings.studyBackgroundColor : settings.restBackgroundColor).ignoresSafeArea()
+                    FluidFillView(progress: progress, gradient: isStudy ? studyGradient : restGradient, motionManager: motionManager, isAnimating: timerRunning)
                 }
                 
-                // Fixed centered content
                 VStack(spacing: 30) {
-                    // Timer label with session indicator (hidden in battery saver)
                     if !batterySaverMode {
                         VStack(spacing: 8) {
                             Text(isStudy ? "Lock In Time" : (isLongBreak ? "Long Chill" : "Chill Time"))
-                                .font(.largeTitle)
-                                .bold()
-                                .foregroundColor(.white)
-                            
+                                .font(.largeTitle).bold().foregroundColor(.white)
                             if settings.longBreakEnabled {
                                 Text("Session \(consecutiveSessions + 1) of \(settings.sessionsUntilLongBreak)")
-                                    .font(.subheadline)
-                                    .foregroundColor(.white.opacity(0.7))
+                                    .font(.subheadline).foregroundColor(.white.opacity(0.7))
                             }
                         }
                     }
                     
-                    // Timer - always visible, larger in battery saver mode
                     Text(timeString(from: secondsLeft))
                         .font(.system(size: batterySaverMode ? 90 : 70, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
                     
-                    // Control buttons (auto-hiding, hidden in battery saver)
                     if showUI && !batterySaverMode {
                         HStack(spacing: 16) {
-                            Button {
-                                toggleTimer()
-                            } label: {
+                            Button { toggleTimer() } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: timerRunning ? "pause.fill" : "play.fill")
                                     Text(timerRunning ? "Pause" : "Start").bold()
-                                }
-                                .foregroundColor(.white)
+                                }.foregroundColor(.white)
                             }
                             .buttonStyle(GlassButtonStyle(isActive: timerRunning, activeColor: .green))
                             
-                            Button {
-                                resetTimer()
-                            } label: {
+                            Button { resetTimer() } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "arrow.counterclockwise")
                                     Text("Reset").bold()
-                                }
-                                .foregroundColor(.white)
+                                }.foregroundColor(.white)
                             }
                             .buttonStyle(GlassButtonStyle())
                             
-                            Button {
-                                toggleTimelapse()
-                            } label: {
+                            Button { toggleTimelapse() } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: cameraManager.isRecording ? "video.fill" : "video")
                                     Text(cameraManager.isRecording ? "Rec" : "Timelapse").bold()
-                                }
-                                .foregroundColor(.white)
+                                }.foregroundColor(.white)
                             }
                             .buttonStyle(GlassButtonStyle(isActive: cameraManager.isRecording, activeColor: .red))
                         }
                         .transition(.opacity)
                     }
                     
-                    // Sound indicator (auto-hiding, hidden in battery saver)
                     if showUI && !batterySaverMode && soundManager.currentSound != nil && soundManager.isPlaying {
                         HStack(spacing: 6) {
                             Image(systemName: "speaker.wave.2.fill")
                             Text(soundManager.currentSound?.displayName ?? "")
                         }
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.7))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+                        .font(.caption).foregroundColor(.white.opacity(0.7))
+                        .padding(.horizontal, 12).padding(.vertical, 6)
                         .background(Capsule().fill(.white.opacity(0.15)))
                         .transition(.opacity)
                     }
                 }
                 
-                // Camera preview (hidden in battery saver)
                 if showCameraPreview && !cameraPreviewHidden && !batterySaverMode {
                     DraggableCameraPreview(cameraManager: cameraManager, isHidden: $cameraPreviewHidden)
                 }
                 
-                // Right-side buttons (auto-hiding): X close, Gear, Camera, and Battery Saver
-                // Top-right in portrait, vertically centered in landscape
                 if showUI {
                     HStack {
                         Spacer()
                         VStack {
-                            if !isLandscape {
-                                // Portrait: buttons at top
-                                Spacer().frame(height: 8)
-                            } else {
-                                // Landscape: center vertically
-                                Spacer()
-                            }
+                            if !isLandscape { Spacer().frame(height: 8) } else { Spacer() }
                             
                             VStack(spacing: 12) {
-                                // X close button
                                 Button {
-                                    // Save timelapse if recording before closing, then cleanup
-                                    if cameraManager.isRecording {
-                                        cameraManager.stopRecording()
-                                    }
-                                    // Always cleanup camera to turn off indicator light
+                                    if cameraManager.isRecording { cameraManager.stopRecording() }
                                     cameraManager.cleanup()
                                     showCameraPreview = false
-                                    // Reset timer so new picker values will be used
                                     resetTimer()
                                     choicesMade = false
                                 } label: {
                                     Image(systemName: "xmark")
                                         .font(.system(size: 18, weight: .semibold))
-                                        .frame(width: 24, height: 24)
-                                        .foregroundColor(.white)
+                                        .frame(width: 24, height: 24).foregroundColor(.white)
                                         .padding(12)
-                                        .background(
-                                            Circle()
-                                                .fill(.ultraThinMaterial)
-                                                .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
-                                        )
+                                        .background(Circle().fill(.ultraThinMaterial).overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1)))
                                         .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                                 }
                                 
-                                // Gear button (hidden in battery saver)
                                 if !batterySaverMode {
                                     Button {
                                         withAnimation(.spring(response: 0.4)) { showSettings = true }
                                         showUITemporarily()
                                     } label: {
                                         Image(systemName: "gearshape.fill")
-                                            .font(.system(size: 20))
-                                            .frame(width: 24, height: 24)
-                                            .foregroundColor(.white)
+                                            .font(.system(size: 20)).frame(width: 24, height: 24).foregroundColor(.white)
                                             .padding(12)
-                                            .background(
-                                                Circle()
-                                                    .fill(.ultraThinMaterial)
-                                                    .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
-                                            )
+                                            .background(Circle().fill(.ultraThinMaterial).overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1)))
                                             .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                                     }
                                 }
                                 
-                                // Show camera button (when preview is hidden, hidden in battery saver)
                                 if showCameraPreview && cameraPreviewHidden && !batterySaverMode {
                                     Button {
-                                        withAnimation(.spring(response: 0.3)) {
-                                            cameraPreviewHidden = false
-                                        }
+                                        withAnimation(.spring(response: 0.3)) { cameraPreviewHidden = false }
                                     } label: {
                                         Image(systemName: "video.fill")
-                                            .font(.system(size: 18))
-                                            .frame(width: 24, height: 24)
-                                            .foregroundColor(.white)
+                                            .font(.system(size: 18)).frame(width: 24, height: 24).foregroundColor(.white)
                                             .padding(12)
-                                            .background(
-                                                Circle()
-                                                    .fill(.ultraThinMaterial)
-                                                    .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
-                                            )
+                                            .background(Circle().fill(.ultraThinMaterial).overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1)))
                                             .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                                     }
                                 }
                                 
-                                // Battery saver / dark mode button
                                 Button {
-                                    withAnimation(.easeInOut(duration: 0.3)) {
-                                        batterySaverMode.toggle()
-                                    }
+                                    withAnimation(.easeInOut(duration: 0.3)) { batterySaverMode.toggle() }
                                 } label: {
                                     Image(systemName: batterySaverMode ? "sun.max.fill" : "moon.fill")
-                                        .font(.system(size: 20))
-                                        .frame(width: 24, height: 24)
+                                        .font(.system(size: 20)).frame(width: 24, height: 24)
                                         .foregroundColor(batterySaverMode ? .yellow : .white)
                                         .padding(12)
-                                        .background(
-                                            Circle()
-                                                .fill(.ultraThinMaterial)
-                                                .opacity(batterySaverMode ? 0.3 : 1.0)
-                                                .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
-                                        )
+                                        .background(Circle().fill(.ultraThinMaterial).opacity(batterySaverMode ? 0.3 : 1.0)
+                                            .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1)))
                                         .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                                 }
                             }
                             
-                            if isLandscape {
-                                // Landscape: center vertically
-                                Spacer()
-                            } else {
-                                // Portrait: let buttons stay at top
-                                Spacer()
-                            }
+                            if isLandscape { Spacer() } else { Spacer() }
                         }
                         .padding(.trailing, 20)
                     }
                     .transition(.opacity)
                 }
                 
-                // Settings panel (hidden in battery saver)
                 if showSettings && !batterySaverMode {
                     SettingsPanel(settings: settings, soundManager: soundManager, isPresented: $showSettings)
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
         }
-        .onTapGesture {
-            showUITemporarily()
-        }
-        .onAppear {
-            showUITemporarily()
-        }
+        .onTapGesture { showUITemporarily() }
+        .onAppear { showUITemporarily() }
         .onReceive(timer) { _ in
             guard timerRunning else { return }
-            
             if secondsLeft > 0 {
                 secondsLeft -= 1
-                if isStudy {
-                    studySecondsThisSession += 1
-                }
+                if isStudy { studySecondsThisSession += 1 }
             } else {
                 timerCompleted()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             updateTimerFromBackground()
-            // Resume motion updates if timer is running and not in battery saver
-            if timerRunning && !batterySaverMode {
-                motionManager.startMotionUpdates()
-            }
+            if timerRunning && !batterySaverMode { motionManager.startMotionUpdates() }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
             if timerRunning { backgroundTime = Date() }
-            // Stop motion updates when going to background to save battery
             motionManager.stopMotionUpdates()
         }
         .alert("Timelapse", isPresented: $showTimelapseAlert) {
             Button("OK", role: .cancel) { }
-        } message: {
-            Text(timelapseMessage ?? "")
-        }
+        } message: { Text(timelapseMessage ?? "") }
         .onChange(of: studyTime) { _, newValue in
-            // Update timer if not running and in study mode
-            if !timerRunning && isStudy {
-                secondsLeft = newValue * 60
-            }
+            if !timerRunning && isStudy { secondsLeft = newValue * 60 }
         }
         .onChange(of: restTime) { _, newValue in
-            // Update timer if not running and in rest mode
-            if !timerRunning && !isStudy && !isLongBreak {
-                secondsLeft = newValue * 60
-            }
+            if !timerRunning && !isStudy && !isLongBreak { secondsLeft = newValue * 60 }
         }
         .onChange(of: batterySaverMode) { _, newValue in
-            // Stop motion updates in battery saver mode
-            if newValue {
-                motionManager.stopMotionUpdates()
-            } else if timerRunning {
-                motionManager.startMotionUpdates()
-            }
+            if newValue { motionManager.stopMotionUpdates() }
+            else if timerRunning { motionManager.startMotionUpdates() }
         }
         .onChange(of: choicesMade) { _, newValue in
-            // When leaving timer screen (choicesMade becomes false), cleanup camera
             if !newValue {
-                if cameraManager.isRecording {
-                    cameraManager.stopRecording()
-                }
+                if cameraManager.isRecording { cameraManager.stopRecording() }
                 cameraManager.cleanup()
                 showCameraPreview = false
+           
             }
         }
         .onDisappear {
-            // Ensure camera is fully stopped when leaving timer screen
-            if cameraManager.isRecording {
-                cameraManager.stopRecording()
-            }
+            if cameraManager.isRecording { cameraManager.stopRecording() }
             cameraManager.cleanup()
             showCameraPreview = false
             soundManager.stop()
             motionManager.stopMotionUpdates()
+         
         }
     }
     
     func showUITemporarily() {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            showUI = true
-        }
-        
+        withAnimation(.easeInOut(duration: 0.2)) { showUI = true }
         hideTimer?.invalidate()
         hideTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
-            withAnimation(.easeInOut(duration: 0.3)) {
-                showUI = false
-            }
+            withAnimation(.easeInOut(duration: 0.3)) { showUI = false }
         }
     }
     
@@ -2313,22 +1846,13 @@ struct TimerScreen: View {
         if timerRunning {
             timerStartTime = Date()
             scheduleTimerEndNotification()
-            
-            // Start motion updates for fluid animation (only if not in battery saver)
-            if !batterySaverMode {
-                motionManager.startMotionUpdates()
-            }
-            
-            // Start focus sound if study time and not already playing
-            if isStudy && soundManager.currentSound != nil && !soundManager.isPlaying {
-                soundManager.play()
-            }
+            if !batterySaverMode { motionManager.startMotionUpdates() }
+            if isStudy && soundManager.currentSound != nil && !soundManager.isPlaying { soundManager.play() }
+
         } else {
             cancelScheduledNotifications()
             timerStartTime = nil
-            // Stop motion updates when paused to save battery
             motionManager.stopMotionUpdates()
-            // Don't pause music when timer is paused - let it keep playing
         }
     }
     
@@ -2347,25 +1871,18 @@ struct TimerScreen: View {
     }
     
     func timerCompleted() {
-        if !settings.isMuted {
-            playDingSound()
-        }
-        
+        if !settings.isMuted { playDingSound() }
         cancelScheduledNotifications()
         scheduleCompletionNotification()
         
         let wasStudy = isStudy
         
         if wasStudy {
-            // Record study time
             stats.addStudyTime(seconds: studySecondsThisSession)
             studySecondsThisSession = 0
             consecutiveSessions += 1
-            
-            // Stop focus sound during break
             soundManager.pause()
             
-            // Check if it's time for a long break
             if settings.longBreakEnabled && consecutiveSessions >= settings.sessionsUntilLongBreak {
                 isLongBreak = true
                 consecutiveSessions = 0
@@ -2376,23 +1893,16 @@ struct TimerScreen: View {
             }
             isStudy = false
         } else {
-            // Break finished, start study
             isStudy = true
             isLongBreak = false
             secondsLeft = studyTime * 60
-            
-            // Resume focus sound
-            if timerRunning && soundManager.currentSound != nil {
-                soundManager.play()
-            }
+            if timerRunning && soundManager.currentSound != nil { soundManager.play() }
         }
-        
-        // Timelapse continues recording regardless of timer cycles
-        // User must manually stop recording
         
         if timerRunning {
             timerStartTime = Date()
             scheduleTimerEndNotification()
+
         }
     }
     
@@ -2406,14 +1916,14 @@ struct TimerScreen: View {
     
     func toggleTimelapse() {
         if isSimulator {
-            timelapseMessage = "Timelapse requires a real device. The camera is not available in the simulator."
+            timelapseMessage = "Timelapse requires a real device."
             showTimelapseAlert = true
             return
         }
         
         if cameraManager.isRecording {
             cameraManager.onTimelapseComplete = { url in
-                timelapseMessage = url != nil ? "Timelapse saved to your photo library!" : "Could not create timelapse. Try recording a longer session."
+                timelapseMessage = url != nil ? "Timelapse saved to your photo library!" : "Could not create timelapse."
                 showTimelapseAlert = true
             }
             cameraManager.stopRecording()
@@ -2426,12 +1936,12 @@ struct TimerScreen: View {
                         showCameraPreview = true
                         cameraManager.startRecording()
                         cameraManager.onTimelapseComplete = { url in
-                            timelapseMessage = url != nil ? "Timelapse saved to your photo library!" : "Could not create timelapse. Try recording a longer session."
+                            timelapseMessage = url != nil ? "Timelapse saved!" : "Could not create timelapse."
                             showTimelapseAlert = true
                         }
                     }
                 } else {
-                    timelapseMessage = "Camera access is required for timelapse. Please enable it in Settings."
+                    timelapseMessage = "Camera access required for timelapse."
                     showTimelapseAlert = true
                 }
             }
@@ -2440,9 +1950,7 @@ struct TimerScreen: View {
     
     func updateTimerFromBackground() {
         guard let backgroundTime = backgroundTime, timerRunning else { return }
-        
-        let timeElapsed = Date().timeIntervalSince(backgroundTime)
-        let secondsElapsed = Int(timeElapsed)
+        let secondsElapsed = Int(Date().timeIntervalSince(backgroundTime))
         
         if secondsElapsed >= secondsLeft {
             var remainingElapsed = secondsElapsed
@@ -2453,11 +1961,8 @@ struct TimerScreen: View {
             secondsLeft -= remainingElapsed
         } else {
             secondsLeft -= secondsElapsed
-            if isStudy {
-                studySecondsThisSession += secondsElapsed
-            }
+            if isStudy { studySecondsThisSession += secondsElapsed }
         }
-        
         self.backgroundTime = nil
     }
     
@@ -2472,10 +1977,7 @@ struct TimerScreen: View {
         
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(secondsLeft), repeats: false)
         let request = UNNotificationRequest(identifier: "timer_end", content: content, trigger: trigger)
-        
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error { print("Error scheduling notification: \(error)") }
-        }
+        UNUserNotificationCenter.current().add(request) { _ in }
     }
     
     func scheduleCompletionNotification() {
@@ -2486,10 +1988,7 @@ struct TimerScreen: View {
         
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
         let request = UNNotificationRequest(identifier: "timer_completed_\(UUID().uuidString)", content: content, trigger: trigger)
-        
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error { print("Error scheduling notification: \(error)") }
-        }
+        UNUserNotificationCenter.current().add(request) { _ in }
     }
     
     func cancelScheduledNotifications() {
@@ -2497,31 +1996,22 @@ struct TimerScreen: View {
     }
     
     func timeString(from seconds: Int) -> String {
-        let m = seconds / 60
-        let s = seconds % 60
-        return String(format: "%02d:%02d", m, s)
+        String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
     
     func playDingSound() {
-        // Try to play custom ding sound first
         if let url = Bundle.main.url(forResource: "ding", withExtension: "mp3") {
             do {
-                let audioSession = AVAudioSession.sharedInstance()
-                try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers, .duckOthers])
-                try audioSession.setActive(true)
-                
+                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers, .duckOthers])
+                try AVAudioSession.sharedInstance().setActive(true)
                 audioPlayer = try AVAudioPlayer(contentsOf: url)
                 audioPlayer?.volume = 1.0
                 audioPlayer?.prepareToPlay()
                 audioPlayer?.play()
                 return
-            } catch {
-                print("Error playing custom ding: \(error)")
-            }
+            } catch { }
         }
-        
-        // Fallback to system sound
-        AudioServicesPlaySystemSound(1007) // Default "received" sound
+        AudioServicesPlaySystemSound(1007)
     }
 }
 
@@ -2547,15 +2037,12 @@ struct ContentView: View {
                 LogoScreen(isFinished: $showLogoScreen)
                     .transition(.opacity)
             } else if !showTimerFlow {
-                // Main Tracker/Home screen
                 TrackerView(showTimer: $showTimerFlow, stats: stats, settings: settings)
                     .transition(.opacity)
             } else if !choicesMade {
-                // Timer picker screen
                 PickerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade, showTimerFlow: $showTimerFlow, stats: stats, settings: settings)
                     .transition(.opacity)
             } else {
-                // Timer screen
                 TimerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade, settings: settings, stats: stats, soundManager: soundManager)
                     .transition(.opacity)
             }
@@ -2567,12 +2054,9 @@ struct ContentView: View {
             requestNotificationPermission()
         }
         .onChange(of: showTimerFlow) { oldValue, newValue in
-            // Control orientation based on which screen is showing
             if newValue {
-                // Leaving tracker -> unlock rotation
                 OrientationManager.shared.unlock()
             } else {
-                // Returning to tracker -> lock to portrait
                 OrientationManager.shared.lockToPortrait()
             }
         }

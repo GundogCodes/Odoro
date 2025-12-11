@@ -15,6 +15,19 @@
 		1FD3A9ED2EE7F3CB007D380C /* rain.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 1FD3A9E62EE7F3CB007D380C /* rain.mp3 */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		1FD3AA152EEA9F03007D380C /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		1FD3A9E22EE7F3CB007D380C /* coffeeshop.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = coffeeshop.mp3; sourceTree = "<group>"; };
 		1FD3A9E32EE7F3CB007D380C /* forest.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = forest.mp3; sourceTree = "<group>"; };
@@ -22,6 +35,7 @@
 		1FD3A9E52EE7F3CB007D380C /* ocean.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = ocean.mp3; sourceTree = "<group>"; };
 		1FD3A9E62EE7F3CB007D380C /* rain.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = rain.mp3; sourceTree = "<group>"; };
 		1FD3A9E72EE7F3CB007D380C /* whitenoise.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = whitenoise.mp3; sourceTree = "<group>"; };
+		1FD3A9FE2EEA9F02007D380C /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		35529FB22E46A8D4002EC013 /* Odoro.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Odoro.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -57,6 +71,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1FD3A9FB2EEA9F02007D380C /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				1FD3A9FE2EEA9F02007D380C /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		35529FA92E46A8D4002EC013 = {
 			isa = PBXGroup;
 			children = (
@@ -67,6 +89,7 @@
 				1FD3A9E62EE7F3CB007D380C /* rain.mp3 */,
 				1FD3A9E72EE7F3CB007D380C /* whitenoise.mp3 */,
 				35529FB42E46A8D4002EC013 /* Odoro */,
+				1FD3A9FB2EEA9F02007D380C /* Frameworks */,
 				35529FB32E46A8D4002EC013 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -89,6 +112,7 @@
 				35529FAE2E46A8D4002EC013 /* Sources */,
 				35529FAF2E46A8D4002EC013 /* Frameworks */,
 				35529FB02E46A8D4002EC013 /* Resources */,
+				1FD3AA152EEA9F03007D380C /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
@@ -111,7 +135,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2600;
+				LastSwiftUpdateCheck = 2610;
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
 					35529FB12E46A8D4002EC013 = {
