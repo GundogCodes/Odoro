@@ -13,7 +13,7 @@ struct TrackerBackground: View {
     @State private var speedMultiplier3: Double = 1.0
     
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(minimumInterval: 1/20)) { timeline in  // Reduced to 20fps for backgrounds
             let time = timeline.date.timeIntervalSinceReferenceDate
             
             GeometryReader { geo in

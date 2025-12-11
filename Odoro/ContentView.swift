@@ -19,27 +19,31 @@ class MotionManager: ObservableObject {
     
     @Published var pitch: Double = 0  // Forward/back tilt
     @Published var roll: Double = 0   // Left/right tilt
+    @Published var isActive = false
     
     init() {
-        startMotionUpdates()
+        // Don't start automatically - wait for explicit start
     }
     
     func startMotionUpdates() {
-        guard motionManager.isDeviceMotionAvailable else { return }
+        guard !isActive, motionManager.isDeviceMotionAvailable else { return }
         
-        motionManager.deviceMotionUpdateInterval = 1/60
+        isActive = true
+        motionManager.deviceMotionUpdateInterval = 1/30  // Reduced from 60fps to 30fps
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, error in
             guard let motion = motion, error == nil else { return }
             
-            withAnimation(.easeOut(duration: 0.1)) {
-                self?.pitch = motion.attitude.pitch
-                self?.roll = motion.attitude.roll
-            }
+            self?.pitch = motion.attitude.pitch
+            self?.roll = motion.attitude.roll
         }
     }
     
     func stopMotionUpdates() {
+        guard isActive else { return }
+        isActive = false
         motionManager.stopDeviceMotionUpdates()
+        pitch = 0
+        roll = 0
     }
     
     deinit {
@@ -114,21 +118,41 @@ struct FluidFillView: View {
     let progress: CGFloat
     let gradient: LinearGradient
     @ObservedObject var motionManager: MotionManager
+    let isAnimating: Bool  // New parameter to control animation
+    
+    @State private var staticTime: Double = 0
     
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let time = timeline.date.timeIntervalSinceReferenceDate
-            
+        if isAnimating {
+            // Animated version - only when timer is running
+            TimelineView(.animation(minimumInterval: 1/30)) { timeline in  // Reduced to 30fps
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                
+                FluidShape(
+                    progress: progress,
+                    waveOffset: CGFloat(time * 1.5),
+                    waveHeight: 12 + CGFloat(abs(motionManager.roll)) * 15,
+                    tiltOffset: CGFloat(motionManager.roll)
+                )
+                .fill(gradient)
+                .shadow(color: .black.opacity(0.2), radius: 10, x: 5, y: 0)
+            }
+            .ignoresSafeArea()
+        } else {
+            // Static version - when paused
             FluidShape(
                 progress: progress,
-                waveOffset: CGFloat(time * 1.5), // Smooth continuous wave
-                waveHeight: 12 + CGFloat(abs(motionManager.roll)) * 15, // Wave height responds to roll
-                tiltOffset: CGFloat(motionManager.roll) // Tilt responds to device roll
+                waveOffset: CGFloat(staticTime * 1.5),
+                waveHeight: 12,
+                tiltOffset: 0
             )
             .fill(gradient)
             .shadow(color: .black.opacity(0.2), radius: 10, x: 5, y: 0)
+            .ignoresSafeArea()
+            .onAppear {
+                staticTime = Date().timeIntervalSinceReferenceDate
+            }
         }
-        .ignoresSafeArea()
     }
 }
 
@@ -693,10 +717,22 @@ class CameraManager: NSObject, ObservableObject {
     }
     
     func cleanup() {
-        sessionQueue.async { [weak self] in
-            self?.captureSession?.stopRunning()
-        }
+        // Stop recording first if active
         captureTimer?.invalidate()
+        captureTimer = nil
+        
+        // Immediately update state on main thread
+        DispatchQueue.main.async {
+            self.isRecording = false
+            self.previewImage = nil
+        }
+        
+        // Stop capture session synchronously to ensure camera light goes off
+        sessionQueue.sync { [weak self] in
+            self?.captureSession?.stopRunning()
+            self?.captureSession = nil
+            self?.videoOutput = nil
+        }
         
         // Clean up writer if still active
         writerQueue.async { [weak self] in
@@ -704,7 +740,22 @@ class CameraManager: NSObject, ObservableObject {
             self?.assetWriter = nil
             self?.assetWriterInput = nil
             self?.pixelBufferAdaptor = nil
+            self?.isWriterReady = false
         }
+    }
+    
+    // Call this to stop and save timelapse before cleanup
+    func stopAndSave(completion: (() -> Void)? = nil) {
+        guard isRecording else {
+            completion?()
+            return
+        }
+        
+        onTimelapseComplete = { [weak self] url in
+            self?.cleanup()
+            completion?()
+        }
+        stopRecording()
     }
 }
 
@@ -1288,6 +1339,7 @@ struct SettingsPanel: View {
                 .padding(16)
                 .background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
             }
+            
         }
     }
     
@@ -1437,7 +1489,7 @@ struct AnimatedMeshBackground: View {
     @State private var initialized = false
     
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(minimumInterval: 1/20)) { timeline in  // Reduced to 20fps for backgrounds
             let time = timeline.date.timeIntervalSinceReferenceDate
             
             GeometryReader { geo in
@@ -1629,6 +1681,7 @@ struct PickerScreen: View {
     @ObservedObject var stats: StatsManager
     @ObservedObject var settings: AppSettings
     @Environment(\.colorScheme) var colorScheme
+
     @State private var showImage = false
     @State private var showPickers = false
     @State private var showButton = false
@@ -1669,7 +1722,7 @@ struct PickerScreen: View {
                             .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
                             .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
                     }
-
+                    
                     if !choicesMade {
                         HStack {
                             VStack(spacing: isLandscape ? 4 : 8) {
@@ -1950,11 +2003,12 @@ struct TimerScreen: View {
                     (isStudy ? settings.studyBackgroundColor : settings.restBackgroundColor)
                         .ignoresSafeArea()
                     
-                    // Fluid progress fill (only in normal mode)
+                    // Fluid progress fill (only in normal mode, animated only when timer running)
                     FluidFillView(
                         progress: progress,
                         gradient: isStudy ? studyGradient : restGradient,
-                        motionManager: motionManager
+                        motionManager: motionManager,
+                        isAnimating: timerRunning
                     )
                 }
                 
@@ -2057,10 +2111,13 @@ struct TimerScreen: View {
                             VStack(spacing: 12) {
                                 // X close button
                                 Button {
-                                    // Save timelapse if recording before closing
+                                    // Save timelapse if recording before closing, then cleanup
                                     if cameraManager.isRecording {
                                         cameraManager.stopRecording()
                                     }
+                                    // Always cleanup camera to turn off indicator light
+                                    cameraManager.cleanup()
+                                    showCameraPreview = false
                                     // Reset timer so new picker values will be used
                                     resetTimer()
                                     choicesMade = false
@@ -2180,9 +2237,15 @@ struct TimerScreen: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             updateTimerFromBackground()
+            // Resume motion updates if timer is running and not in battery saver
+            if timerRunning && !batterySaverMode {
+                motionManager.startMotionUpdates()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
             if timerRunning { backgroundTime = Date() }
+            // Stop motion updates when going to background to save battery
+            motionManager.stopMotionUpdates()
         }
         .alert("Timelapse", isPresented: $showTimelapseAlert) {
             Button("OK", role: .cancel) { }
@@ -2201,9 +2264,33 @@ struct TimerScreen: View {
                 secondsLeft = newValue * 60
             }
         }
+        .onChange(of: batterySaverMode) { _, newValue in
+            // Stop motion updates in battery saver mode
+            if newValue {
+                motionManager.stopMotionUpdates()
+            } else if timerRunning {
+                motionManager.startMotionUpdates()
+            }
+        }
+        .onChange(of: choicesMade) { _, newValue in
+            // When leaving timer screen (choicesMade becomes false), cleanup camera
+            if !newValue {
+                if cameraManager.isRecording {
+                    cameraManager.stopRecording()
+                }
+                cameraManager.cleanup()
+                showCameraPreview = false
+            }
+        }
         .onDisappear {
+            // Ensure camera is fully stopped when leaving timer screen
+            if cameraManager.isRecording {
+                cameraManager.stopRecording()
+            }
             cameraManager.cleanup()
+            showCameraPreview = false
             soundManager.stop()
+            motionManager.stopMotionUpdates()
         }
     }
     
@@ -2227,6 +2314,11 @@ struct TimerScreen: View {
             timerStartTime = Date()
             scheduleTimerEndNotification()
             
+            // Start motion updates for fluid animation (only if not in battery saver)
+            if !batterySaverMode {
+                motionManager.startMotionUpdates()
+            }
+            
             // Start focus sound if study time and not already playing
             if isStudy && soundManager.currentSound != nil && !soundManager.isPlaying {
                 soundManager.play()
@@ -2234,6 +2326,8 @@ struct TimerScreen: View {
         } else {
             cancelScheduledNotifications()
             timerStartTime = nil
+            // Stop motion updates when paused to save battery
+            motionManager.stopMotionUpdates()
             // Don't pause music when timer is paused - let it keep playing
         }
     }
@@ -2249,6 +2343,7 @@ struct TimerScreen: View {
         studySecondsThisSession = 0
         cancelScheduledNotifications()
         soundManager.stop()
+        motionManager.stopMotionUpdates()
     }
     
     func timerCompleted() {
