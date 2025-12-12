@@ -13,7 +13,20 @@
 		1FD3A9EB2EE7F3CB007D380C /* lofi.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 1FD3A9E42EE7F3CB007D380C /* lofi.mp3 */; };
 		1FD3A9EC2EE7F3CB007D380C /* ocean.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 1FD3A9E52EE7F3CB007D380C /* ocean.mp3 */; };
 		1FD3A9ED2EE7F3CB007D380C /* rain.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 1FD3A9E62EE7F3CB007D380C /* rain.mp3 */; };
+		1FD3AA432EEB86DB007D380C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1FD3AA422EEB86DB007D380C /* WidgetKit.framework */; };
+		1FD3AA442EEB86DB007D380C /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1FD3A9FE2EEA9F02007D380C /* SwiftUI.framework */; };
+		1FD3AA532EEB86DC007D380C /* OdoroWidgetExtensionExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1FD3AA412EEB86DB007D380C /* OdoroWidgetExtensionExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		1FD3AA512EEB86DC007D380C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 35529FAA2E46A8D4002EC013 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1FD3AA402EEB86DA007D380C;
+			remoteInfo = OdoroWidgetExtensionExtension;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		1FD3AA152EEA9F03007D380C /* Embed Foundation Extensions */ = {
@@ -22,6 +35,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
+				1FD3AA532EEB86DC007D380C /* OdoroWidgetExtensionExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -36,6 +50,8 @@
 		1FD3A9E62EE7F3CB007D380C /* rain.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = rain.mp3; sourceTree = "<group>"; };
 		1FD3A9E72EE7F3CB007D380C /* whitenoise.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = whitenoise.mp3; sourceTree = "<group>"; };
 		1FD3A9FE2EEA9F02007D380C /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		1FD3AA412EEB86DB007D380C /* OdoroWidgetExtensionExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OdoroWidgetExtensionExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		1FD3AA422EEB86DB007D380C /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		35529FB22E46A8D4002EC013 /* Odoro.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Odoro.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -47,9 +63,32 @@
 			);
 			target = 35529FB12E46A8D4002EC013 /* Odoro */;
 		};
+		1FD3AA572EEB86DC007D380C /* Exceptions for "OdoroWidgetExtension" folder in "OdoroWidgetExtensionExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 1FD3AA402EEB86DA007D380C /* OdoroWidgetExtensionExtension */;
+		};
+		1FD3AA652EEB8AFB007D380C /* Exceptions for "OdoroWidgetExtension" folder in "Odoro" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				OdoroTimerAttributes.swift,
+			);
+			target = 35529FB12E46A8D4002EC013 /* Odoro */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		1FD3AA452EEB86DB007D380C /* OdoroWidgetExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				1FD3AA652EEB8AFB007D380C /* Exceptions for "OdoroWidgetExtension" folder in "Odoro" target */,
+				1FD3AA572EEB86DC007D380C /* Exceptions for "OdoroWidgetExtension" folder in "OdoroWidgetExtensionExtension" target */,
+			);
+			path = OdoroWidgetExtension;
+			sourceTree = "<group>";
+		};
 		35529FB42E46A8D4002EC013 /* Odoro */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -61,6 +100,15 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		1FD3AA3E2EEB86DA007D380C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1FD3AA442EEB86DB007D380C /* SwiftUI.framework in Frameworks */,
+				1FD3AA432EEB86DB007D380C /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		35529FAF2E46A8D4002EC013 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -75,6 +123,7 @@
 			isa = PBXGroup;
 			children = (
 				1FD3A9FE2EEA9F02007D380C /* SwiftUI.framework */,
+				1FD3AA422EEB86DB007D380C /* WidgetKit.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -89,6 +138,7 @@
 				1FD3A9E62EE7F3CB007D380C /* rain.mp3 */,
 				1FD3A9E72EE7F3CB007D380C /* whitenoise.mp3 */,
 				35529FB42E46A8D4002EC013 /* Odoro */,
+				1FD3AA452EEB86DB007D380C /* OdoroWidgetExtension */,
 				1FD3A9FB2EEA9F02007D380C /* Frameworks */,
 				35529FB32E46A8D4002EC013 /* Products */,
 			);
@@ -98,6 +148,7 @@
 			isa = PBXGroup;
 			children = (
 				35529FB22E46A8D4002EC013 /* Odoro.app */,
+				1FD3AA412EEB86DB007D380C /* OdoroWidgetExtensionExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -105,6 +156,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		1FD3AA402EEB86DA007D380C /* OdoroWidgetExtensionExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1FD3AA542EEB86DC007D380C /* Build configuration list for PBXNativeTarget "OdoroWidgetExtensionExtension" */;
+			buildPhases = (
+				1FD3AA3D2EEB86DA007D380C /* Sources */,
+				1FD3AA3E2EEB86DA007D380C /* Frameworks */,
+				1FD3AA3F2EEB86DA007D380C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1FD3AA452EEB86DB007D380C /* OdoroWidgetExtension */,
+			);
+			name = OdoroWidgetExtensionExtension;
+			packageProductDependencies = (
+			);
+			productName = OdoroWidgetExtensionExtension;
+			productReference = 1FD3AA412EEB86DB007D380C /* OdoroWidgetExtensionExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		35529FB12E46A8D4002EC013 /* Odoro */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 35529FBD2E46A8D5002EC013 /* Build configuration list for PBXNativeTarget "Odoro" */;
@@ -117,6 +190,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				1FD3AA522EEB86DC007D380C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				35529FB42E46A8D4002EC013 /* Odoro */,
@@ -138,6 +212,10 @@
 				LastSwiftUpdateCheck = 2610;
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
+					1FD3AA402EEB86DA007D380C = {
+						CreatedOnToolsVersion = 26.1.1;
+						LastSwiftMigration = 2610;
+					};
 					35529FB12E46A8D4002EC013 = {
 						CreatedOnToolsVersion = 26.0;
 					};
@@ -158,11 +236,19 @@
 			projectRoot = "";
 			targets = (
 				35529FB12E46A8D4002EC013 /* Odoro */,
+				1FD3AA402EEB86DA007D380C /* OdoroWidgetExtensionExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		1FD3AA3F2EEB86DA007D380C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		35529FB02E46A8D4002EC013 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -179,6 +265,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		1FD3AA3D2EEB86DA007D380C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		35529FAE2E46A8D4002EC013 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -188,7 +281,84 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		1FD3AA522EEB86DC007D380C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1FD3AA402EEB86DA007D380C /* OdoroWidgetExtensionExtension */;
+			targetProxy = 1FD3AA512EEB86DC007D380C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		1FD3AA552EEB86DC007D380C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9K4HZ244L6;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = OdoroWidgetExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = OdoroWidgetExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gunisharma.Odoro.OdoroWidgetExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "OdoroWidgetExtension/OdoroWidgetExtensionExtension-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1FD3AA562EEB86DC007D380C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9K4HZ244L6;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = OdoroWidgetExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = OdoroWidgetExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gunisharma.Odoro.OdoroWidgetExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "OdoroWidgetExtension/OdoroWidgetExtensionExtension-Bridging-Header.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		35529FBB2E46A8D5002EC013 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -319,9 +489,11 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Odoro/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_NSCameraUsageDescription = "<key>NSPhotoLibraryAddUsageDescription</key>\n<string>Odoro needs photo library access to save your study timelapse videos.</string>";
 				INFOPLIST_KEY_NSMotionUsageDescription = "Odoro uses motion to create a fluid animation effect for the timer.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "<key>NSCameraUsageDescription</key>\n<string>Odoro needs camera access to create a timelapse of your study session.</string>\n";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -355,9 +527,11 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Odoro/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "";
 				INFOPLIST_KEY_NSCameraUsageDescription = "<key>NSPhotoLibraryAddUsageDescription</key>\n<string>Odoro needs photo library access to save your study timelapse videos.</string>";
 				INFOPLIST_KEY_NSMotionUsageDescription = "Odoro uses motion to create a fluid animation effect for the timer.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "<key>NSCameraUsageDescription</key>\n<string>Odoro needs camera access to create a timelapse of your study session.</string>\n";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -383,6 +557,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		1FD3AA542EEB86DC007D380C /* Build configuration list for PBXNativeTarget "OdoroWidgetExtensionExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1FD3AA552EEB86DC007D380C /* Debug */,
+				1FD3AA562EEB86DC007D380C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		35529FAD2E46A8D4002EC013 /* Build configuration list for PBXProject "Odoro" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

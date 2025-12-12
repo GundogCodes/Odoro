@@ -475,6 +475,93 @@ class AppSettings: ObservableObject {
     }
 }
 
+// MARK: - Live Activity Manager
+class LiveActivityManager: ObservableObject {
+    @Published var currentActivity: Activity<OdoroTimerAttributes>?
+    
+    static let shared = LiveActivityManager()
+    
+    func startActivity(endTime: Date, isStudy: Bool, sessionNumber: Int, totalSessions: Int) {
+        let authInfo = ActivityAuthorizationInfo()
+        print("🔴 Live Activity Debug:")
+        print("   - areActivitiesEnabled: \(authInfo.areActivitiesEnabled)")
+        print("   - endTime: \(endTime)")
+        print("   - isStudy: \(isStudy)")
+        
+        guard authInfo.areActivitiesEnabled else {
+            print("❌ Live Activities not enabled!")
+            return
+        }
+        
+        // End any existing activity first
+        if let existing = currentActivity {
+            Task {
+                await existing.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+        
+        let attributes = OdoroTimerAttributes(timerName: "Odoro")
+        let contentState = OdoroTimerAttributes.ContentState(
+            endTime: endTime,
+            isStudy: isStudy,
+            isPaused: false,
+            sessionNumber: sessionNumber,
+            totalSessions: totalSessions
+        )
+        
+        do {
+            let activity = try Activity.request(
+                attributes: attributes,
+                content: .init(state: contentState, staleDate: endTime.addingTimeInterval(60)),
+                pushType: nil
+            )
+            currentActivity = activity
+            print("✅ Started Live Activity: \(activity.id)")
+        } catch {
+            print("❌ Error starting Live Activity: \(error)")
+        }
+    }
+    
+    func updateActivity(endTime: Date, isStudy: Bool, isPaused: Bool, sessionNumber: Int, totalSessions: Int) {
+        guard let activity = currentActivity else {
+            print("⚠️ No current activity to update")
+            return
+        }
+        
+        let contentState = OdoroTimerAttributes.ContentState(
+            endTime: endTime,
+            isStudy: isStudy,
+            isPaused: isPaused,
+            sessionNumber: sessionNumber,
+            totalSessions: totalSessions
+        )
+        
+        print("🔄 Updating Live Activity: isStudy=\(isStudy)")
+        
+        Task {
+            await activity.update(
+                ActivityContent(state: contentState, staleDate: isPaused ? nil : endTime.addingTimeInterval(60))
+            )
+        }
+    }
+    
+    func endActivity() {
+        guard let activity = currentActivity else { return }
+        Task {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        currentActivity = nil
+    }
+    
+    func cleanupOrphanedActivities() {
+        Task {
+            for activity in Activity<OdoroTimerAttributes>.activities {
+                await activity.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+        currentActivity = nil
+    }
+}
 
 // MARK: - Camera Manager for Timelapse
 class CameraManager: NSObject, ObservableObject {
@@ -1595,6 +1682,7 @@ struct TimerScreen: View {
     @State private var studySecondsThisSession = 0
     
     @State private var timerStartTime: Date?
+    @State private var timerEndTime: Date?
     @State private var backgroundTime: Date?
     @State private var audioPlayer: AVAudioPlayer?
     
@@ -1609,6 +1697,7 @@ struct TimerScreen: View {
     @State private var batterySaverMode = false
     
     @StateObject private var motionManager = MotionManager()
+    @StateObject private var liveActivityManager = LiveActivityManager()
     
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
@@ -1720,6 +1809,7 @@ struct TimerScreen: View {
                                     if cameraManager.isRecording { cameraManager.stopRecording() }
                                     cameraManager.cleanup()
                                     showCameraPreview = false
+                                    liveActivityManager.endActivity()
                                     resetTimer()
                                     choicesMade = false
                                 } label: {
@@ -1785,21 +1875,38 @@ struct TimerScreen: View {
         .onTapGesture { showUITemporarily() }
         .onAppear { showUITemporarily() }
         .onReceive(timer) { _ in
-            guard timerRunning else { return }
-            if secondsLeft > 0 {
-                secondsLeft -= 1
-                if isStudy { studySecondsThisSession += 1 }
+            guard timerRunning, let endTime = timerEndTime else { return }
+            
+            let remaining = Int(endTime.timeIntervalSince(Date()))
+            
+            if remaining > 0 {
+                // Track study time based on change
+                if isStudy {
+                    let studied = secondsLeft - remaining
+                    if studied > 0 { studySecondsThisSession += studied }
+                }
+                secondsLeft = remaining
             } else {
+                secondsLeft = 0
                 timerCompleted()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             updateTimerFromBackground()
             if timerRunning && !batterySaverMode { motionManager.startMotionUpdates() }
+            
+            // If timer is not running, clean up any orphaned Live Activities
+            if !timerRunning {
+                liveActivityManager.cleanupOrphanedActivities()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
             if timerRunning { backgroundTime = Date() }
             motionManager.stopMotionUpdates()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
+            // End Live Activity when app is terminated
+            liveActivityManager.endActivity()
         }
         .alert("Timelapse", isPresented: $showTimelapseAlert) {
             Button("OK", role: .cancel) { }
@@ -1819,7 +1926,7 @@ struct TimerScreen: View {
                 if cameraManager.isRecording { cameraManager.stopRecording() }
                 cameraManager.cleanup()
                 showCameraPreview = false
-           
+                liveActivityManager.endActivity()
             }
         }
         .onDisappear {
@@ -1828,7 +1935,7 @@ struct TimerScreen: View {
             showCameraPreview = false
             soundManager.stop()
             motionManager.stopMotionUpdates()
-         
+            liveActivityManager.endActivity()
         }
     }
     
@@ -1845,14 +1952,27 @@ struct TimerScreen: View {
         
         if timerRunning {
             timerStartTime = Date()
+            timerEndTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
             scheduleTimerEndNotification()
             if !batterySaverMode { motionManager.startMotionUpdates() }
             if isStudy && soundManager.currentSound != nil && !soundManager.isPlaying { soundManager.play() }
-
+            
+            let endTime = timerEndTime!
+            print("🟡 Timer started - attempting to start Live Activity...")
+            print("   - secondsLeft: \(secondsLeft)")
+            print("   - endTime: \(endTime)")
+            liveActivityManager.startActivity(endTime: endTime, isStudy: isStudy, sessionNumber: consecutiveSessions + 1,
+                                             totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         } else {
             cancelScheduledNotifications()
             timerStartTime = nil
+            timerEndTime = nil
             motionManager.stopMotionUpdates()
+            
+            let endTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
+            liveActivityManager.updateActivity(endTime: endTime, isStudy: isStudy, isPaused: true,
+                                              sessionNumber: consecutiveSessions + 1,
+                                              totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         }
     }
     
@@ -1862,12 +1982,14 @@ struct TimerScreen: View {
         isLongBreak = false
         secondsLeft = studyTime * 60
         timerStartTime = nil
+        timerEndTime = nil
         backgroundTime = nil
         sessionComplete = false
         studySecondsThisSession = 0
         cancelScheduledNotifications()
         soundManager.stop()
         motionManager.stopMotionUpdates()
+        liveActivityManager.endActivity()
     }
     
     func timerCompleted() {
@@ -1901,8 +2023,17 @@ struct TimerScreen: View {
         
         if timerRunning {
             timerStartTime = Date()
+            timerEndTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
             scheduleTimerEndNotification()
-
+            let endTime = timerEndTime!
+            print("🔄 Timer completed - switching mode:")
+            print("   - wasStudy: \(wasStudy), nowStudy: \(isStudy)")
+            print("   - new secondsLeft: \(secondsLeft)")
+            print("   - endTime: \(endTime)")
+            
+            liveActivityManager.updateActivity(endTime: endTime, isStudy: isStudy, isPaused: false,
+                                              sessionNumber: consecutiveSessions + 1,
+                                              totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         }
     }
     
@@ -1949,21 +2080,29 @@ struct TimerScreen: View {
     }
     
     func updateTimerFromBackground() {
-        guard let backgroundTime = backgroundTime, timerRunning else { return }
-        let secondsElapsed = Int(Date().timeIntervalSince(backgroundTime))
+        guard let backgroundTime = backgroundTime, timerRunning, let endTime = timerEndTime else { return }
         
-        if secondsElapsed >= secondsLeft {
-            var remainingElapsed = secondsElapsed
-            while remainingElapsed >= secondsLeft {
-                remainingElapsed -= secondsLeft
-                timerCompleted()
-            }
-            secondsLeft -= remainingElapsed
+        // Calculate remaining time from the original endTime
+        let remaining = Int(endTime.timeIntervalSince(Date()))
+        
+        if remaining <= 0 {
+            // Timer completed while in background
+            secondsLeft = 0
+            timerCompleted()
         } else {
-            secondsLeft -= secondsElapsed
-            if isStudy { studySecondsThisSession += secondsElapsed }
+            // Update secondsLeft from endTime (keeps it in sync)
+            let previousSecondsLeft = secondsLeft
+            secondsLeft = remaining
+            
+            // Track study time
+            if isStudy {
+                let studied = previousSecondsLeft - remaining
+                if studied > 0 { studySecondsThisSession += studied }
+            }
         }
         self.backgroundTime = nil
+        
+        // No need to update Live Activity - it already has the correct endTime
     }
     
     func scheduleTimerEndNotification() {
@@ -2052,12 +2191,18 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.25), value: choicesMade)
         .onAppear {
             requestNotificationPermission()
+            // Clean up any orphaned Live Activities from previous app sessions
+            if !showTimerFlow {
+                LiveActivityManager.shared.cleanupOrphanedActivities()
+            }
         }
         .onChange(of: showTimerFlow) { oldValue, newValue in
             if newValue {
                 OrientationManager.shared.unlock()
             } else {
                 OrientationManager.shared.lockToPortrait()
+                // Clean up any Live Activities when leaving timer flow
+                LiveActivityManager.shared.cleanupOrphanedActivities()
             }
         }
     }
