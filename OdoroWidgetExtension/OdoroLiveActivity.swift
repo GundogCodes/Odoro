@@ -27,10 +27,6 @@ struct OdoroLiveActivity: Widget {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(context.state.isStudy ? "Lock In Time" : "Chill Time")
                         .font(.headline)
-                    
-                    Text("Session \(context.state.sessionNumber) of \(context.state.totalSessions)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
                 
                 Spacer()
@@ -58,34 +54,32 @@ struct OdoroLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
                         Image(systemName: context.state.isStudy ? "brain.head.profile" : "cup.and.saucer.fill")
                             .font(.title2)
                             .foregroundColor(context.state.isStudy ? .purple : .orange)
                         
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(context.state.isStudy ? "Lock In" : "Chill")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text("Session \(context.state.sessionNumber)/\(context.state.totalSessions)")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                        }
+                        Text(context.state.isStudy ? "Lock In" : "Chill")
+                            .font(.title2)
+                            .fontWeight(.semibold)
                     }
+                    .frame(maxHeight: .infinity)
                 }
                 
                 DynamicIslandExpandedRegion(.trailing) {
                     if context.state.isPaused {
                         Text("PAUSED")
-                            .font(.caption)
+                            .font(.title2)
                             .fontWeight(.bold)
                             .foregroundColor(.yellow)
+                            .frame(maxHeight: .infinity)
                     } else {
                         Text(context.state.endTime, style: .timer)
                             .font(.title2)
                             .fontWeight(.bold)
                             .monospacedDigit()
                             .foregroundColor(context.state.isStudy ? .purple : .orange)
+                            .frame(maxHeight: .infinity)
                     }
                 }
                 
@@ -98,14 +92,17 @@ struct OdoroLiveActivity: Widget {
                 }
             } compactLeading: {
                 Image(systemName: context.state.isStudy ? "brain.head.profile" : "cup.and.saucer.fill")
-                    .font(.system(size: 9))
+                    .font(.system(size: 12))
                     .foregroundColor(context.state.isStudy ? .purple : .orange)
             } compactTrailing: {
-                Text(context.state.endTime, style: .timer)
-                    .font(.system(size: 9))
-                    .monospacedDigit()
-                    .foregroundColor(context.state.isStudy ? .purple : .orange)
-                    .contentTransition(.numericText())
+                ProgressView(timerInterval: Date()...context.state.endTime, countsDown: false) {
+                    EmptyView()
+                } currentValueLabel: {
+                    EmptyView()
+                }
+                .progressViewStyle(.circular)
+                .tint(context.state.isStudy ? .purple : .orange)
+                .frame(width: 14, height: 14)
             } minimal: {
                 Image(systemName: context.state.isStudy ? "brain.head.profile" : "cup.and.saucer.fill")
                     .font(.caption2)
