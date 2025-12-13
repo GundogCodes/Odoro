@@ -498,9 +498,16 @@ class LiveActivityManager: ObservableObject {
         if let existing = currentActivity {
             Task {
                 await existing.end(nil, dismissalPolicy: .immediate)
+                await MainActor.run {
+                    self.createNewActivity(startTime: startTime, endTime: endTime, isStudy: isStudy, sessionNumber: sessionNumber, totalSessions: totalSessions)
+                }
             }
+        } else {
+            createNewActivity(startTime: startTime, endTime: endTime, isStudy: isStudy, sessionNumber: sessionNumber, totalSessions: totalSessions)
         }
-        
+    }
+    
+    private func createNewActivity(startTime: Date, endTime: Date, isStudy: Bool, sessionNumber: Int, totalSessions: Int) {
         let attributes = OdoroTimerAttributes(timerName: "Odoro")
         let contentState = OdoroTimerAttributes.ContentState(
             startTime: startTime,
