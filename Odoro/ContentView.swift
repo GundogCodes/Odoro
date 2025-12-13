@@ -2099,10 +2099,13 @@ struct TimerScreen: View {
                 let studied = previousSecondsLeft - remaining
                 if studied > 0 { studySecondsThisSession += studied }
             }
+            
+            // Update Live Activity to ensure it's in sync
+            liveActivityManager.updateActivity(endTime: timerEndTime!, isStudy: isStudy, isPaused: false,
+                                              sessionNumber: consecutiveSessions + 1,
+                                              totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         }
         self.backgroundTime = nil
-        
-        // No need to update Live Activity - it already has the correct endTime
     }
     
     func scheduleTimerEndNotification() {
