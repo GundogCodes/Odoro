@@ -11,6 +11,7 @@ import Foundation
 // MARK: - Activity Attributes (Shared)
 struct OdoroTimerAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
+        var startTime: Date
         var endTime: Date
         var isStudy: Bool
         var isPaused: Bool

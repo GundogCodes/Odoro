@@ -481,10 +481,11 @@ class LiveActivityManager: ObservableObject {
     
     static let shared = LiveActivityManager()
     
-    func startActivity(endTime: Date, isStudy: Bool, sessionNumber: Int, totalSessions: Int) {
+    func startActivity(startTime: Date, endTime: Date, isStudy: Bool, sessionNumber: Int, totalSessions: Int) {
         let authInfo = ActivityAuthorizationInfo()
         print("🔴 Live Activity Debug:")
         print("   - areActivitiesEnabled: \(authInfo.areActivitiesEnabled)")
+        print("   - startTime: \(startTime)")
         print("   - endTime: \(endTime)")
         print("   - isStudy: \(isStudy)")
         
@@ -502,6 +503,7 @@ class LiveActivityManager: ObservableObject {
         
         let attributes = OdoroTimerAttributes(timerName: "Odoro")
         let contentState = OdoroTimerAttributes.ContentState(
+            startTime: startTime,
             endTime: endTime,
             isStudy: isStudy,
             isPaused: false,
@@ -522,13 +524,14 @@ class LiveActivityManager: ObservableObject {
         }
     }
     
-    func updateActivity(endTime: Date, isStudy: Bool, isPaused: Bool, sessionNumber: Int, totalSessions: Int) {
+    func updateActivity(startTime: Date, endTime: Date, isStudy: Bool, isPaused: Bool, sessionNumber: Int, totalSessions: Int) {
         guard let activity = currentActivity else {
             print("⚠️ No current activity to update")
             return
         }
         
         let contentState = OdoroTimerAttributes.ContentState(
+            startTime: startTime,
             endTime: endTime,
             isStudy: isStudy,
             isPaused: isPaused,
@@ -1957,11 +1960,13 @@ struct TimerScreen: View {
             if !batterySaverMode { motionManager.startMotionUpdates() }
             if isStudy && soundManager.currentSound != nil && !soundManager.isPlaying { soundManager.play() }
             
+            let startTime = timerStartTime!
             let endTime = timerEndTime!
             print("🟡 Timer started - attempting to start Live Activity...")
             print("   - secondsLeft: \(secondsLeft)")
+            print("   - startTime: \(startTime)")
             print("   - endTime: \(endTime)")
-            liveActivityManager.startActivity(endTime: endTime, isStudy: isStudy, sessionNumber: consecutiveSessions + 1,
+            liveActivityManager.startActivity(startTime: startTime, endTime: endTime, isStudy: isStudy, sessionNumber: consecutiveSessions + 1,
                                              totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         } else {
             cancelScheduledNotifications()
@@ -1970,7 +1975,8 @@ struct TimerScreen: View {
             motionManager.stopMotionUpdates()
             
             let endTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
-            liveActivityManager.updateActivity(endTime: endTime, isStudy: isStudy, isPaused: true,
+            let startTime = Date()
+            liveActivityManager.updateActivity(startTime: startTime, endTime: endTime, isStudy: isStudy, isPaused: true,
                                               sessionNumber: consecutiveSessions + 1,
                                               totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         }
@@ -2025,13 +2031,15 @@ struct TimerScreen: View {
             timerStartTime = Date()
             timerEndTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
             scheduleTimerEndNotification()
+            let startTime = timerStartTime!
             let endTime = timerEndTime!
             print("🔄 Timer completed - switching mode:")
             print("   - wasStudy: \(wasStudy), nowStudy: \(isStudy)")
             print("   - new secondsLeft: \(secondsLeft)")
+            print("   - startTime: \(startTime)")
             print("   - endTime: \(endTime)")
             
-            liveActivityManager.updateActivity(endTime: endTime, isStudy: isStudy, isPaused: false,
+            liveActivityManager.updateActivity(startTime: startTime, endTime: endTime, isStudy: isStudy, isPaused: false,
                                               sessionNumber: consecutiveSessions + 1,
                                               totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         }
@@ -2100,10 +2108,12 @@ struct TimerScreen: View {
                 if studied > 0 { studySecondsThisSession += studied }
             }
             
-            // Update Live Activity to ensure it's in sync
-            liveActivityManager.updateActivity(endTime: timerEndTime!, isStudy: isStudy, isPaused: false,
-                                              sessionNumber: consecutiveSessions + 1,
-                                              totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
+            // Update Live Activity to ensure it's in sync - use original startTime
+            if let startTime = timerStartTime {
+                liveActivityManager.updateActivity(startTime: startTime, endTime: timerEndTime!, isStudy: isStudy, isPaused: false,
+                                                  sessionNumber: consecutiveSessions + 1,
+                                                  totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
+            }
         }
         self.backgroundTime = nil
     }

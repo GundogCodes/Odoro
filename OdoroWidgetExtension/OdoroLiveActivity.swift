@@ -95,7 +95,7 @@ struct OdoroLiveActivity: Widget {
                     .font(.system(size: 12))
                     .foregroundColor(context.state.isStudy ? .purple : .orange)
             } compactTrailing: {
-                ProgressView(timerInterval: Date()...context.state.endTime, countsDown: false) {
+                ProgressView(timerInterval: context.state.startTime...context.state.endTime, countsDown: false) {
                     EmptyView()
                 } currentValueLabel: {
                     EmptyView()
