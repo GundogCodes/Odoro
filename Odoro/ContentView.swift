@@ -1820,7 +1820,7 @@ struct ModernPickerCard: View {
             ZStack {
                 // Background
                 RoundedRectangle(cornerRadius: 24)
-                    .fill(.ultraThinMaterial.opacity(colorScheme == .light ? 0.25 : 1))
+                    .fill(.ultraThinMaterial.opacity(colorScheme == .light ? 0.5 : 1))
 
                 // Scrollable numbers (no spacer rows)
                 ScrollView(.vertical, showsIndicators: false) {
