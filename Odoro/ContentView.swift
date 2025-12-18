@@ -13,6 +13,8 @@ import UserNotifications
 import Photos
 import CoreMotion
 import ActivityKit
+import QuartzCore
+import UIKit
 
 // MARK: - Motion Manager for Gyroscope
 class MotionManager: ObservableObject {
@@ -1721,12 +1723,12 @@ struct PickerScreen: View {
                         HStack(spacing: 12) {
                             ModernPickerCard(
                                 selection: $studyTime,
-                                height: isLandscape ? geo.size.height * 0.5 : geo.size.height * 0.65
+                                height: isLandscape ? geo.size.height * 0.6 : geo.size.height * 0.65
                             )
                             
                             ModernPickerCard(
                                 selection: $restTime,
-                                height: isLandscape ? geo.size.height * 0.5 : geo.size.height * 0.65
+                                height: isLandscape ? geo.size.height * 0.6 : geo.size.height * 0.65
                             )
                         }
                         .padding(.horizontal, 16)
@@ -1799,13 +1801,35 @@ struct PickerScreen: View {
     }
 }
 
+enum DetentTick {
+    // Stronger than selectionChanged
+    static let impact = UIImpactFeedbackGenerator(style: .heavy)
+
+    static let haptic = UISelectionFeedbackGenerator()
+
+    static func prepare() {
+        haptic.prepare()
+    }
+
+    static func tick() {
+        impact.impactOccurred(intensity: 0.5)
+        haptic.selectionChanged()
+        haptic.prepare()
+    }
+}
+
 // MARK: - Modern Picker Card
 struct ModernPickerCard: View {
     @Binding var selection: Int
-    let height: CGFloat
     @Environment(\.colorScheme) var colorScheme
+    
+    @State private var isUserScrolling = false
+    @State private var lastTickTime: CFTimeInterval = 0
     @State private var scrollPosition: Int?
-
+    
+    private let tickMinInterval: CFTimeInterval = 0.03
+    let height: CGFloat
+    
     private let itemHeight: CGFloat = 50
 
     private func pixelAlign(_ value: CGFloat) -> CGFloat {
@@ -1838,6 +1862,21 @@ struct ModernPickerCard: View {
                     }
                     .scrollTargetLayout()
                 }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in
+                            if !isUserScrolling {
+                                isUserScrolling = true
+                                DetentTick.prepare()
+                            }
+                        }
+                        .onEnded { _ in
+                            isUserScrolling = false
+                        }
+                )
+                .contentMargins(.vertical, inset, for: .scrollContent)
+                .scrollPosition(id: $scrollPosition, anchor: .center)
+                .scrollTargetBehavior(.viewAligned)
                 .contentMargins(.vertical, inset, for: .scrollContent)
                 .scrollPosition(id: $scrollPosition, anchor: .center)
                 .scrollTargetBehavior(.viewAligned)
@@ -1867,12 +1906,24 @@ struct ModernPickerCard: View {
             scrollPosition = selection
         }
         .onChange(of: scrollPosition) { _, newValue in
-            if let v = newValue { selection = v }
+            guard let v = newValue else { return }
+            selection = v
+
+            // Only tick for user-driven scrolling (not programmatic updates)
+            guard isUserScrolling else { return }
+
+            // Throttle so it feels like detents, not a buzz
+            let now = CACurrentMediaTime()
+            guard now - lastTickTime >= tickMinInterval else { return }
+            lastTickTime = now
+
+            DetentTick.tick()
         }
         .onChange(of: selection) { _, newValue in
             let v = min(max(newValue, 1), 60)
             if scrollPosition != v { scrollPosition = v }
         }
+        
     }
 }
 
