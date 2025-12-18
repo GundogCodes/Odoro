@@ -195,6 +195,9 @@ class StatsManager: ObservableObject {
     @Published var weekStudySeconds: Int {
         didSet { save() }
     }
+    @Published var allTimeStudySeconds: Int {
+        didSet { save() }
+    }
     @Published var sessionsCompleted: Int {
         didSet { save() }
     }
@@ -204,12 +207,16 @@ class StatsManager: ObservableObject {
     @Published var lastStudyDate: Date? {
         didSet { save() }
     }
+    @Published var weekStartDate: Date? {
+        didSet { save() }
+    }
     
     private let defaults = UserDefaults.standard
     
     init() {
         self.todayStudySeconds = defaults.integer(forKey: "todayStudySeconds")
         self.weekStudySeconds = defaults.integer(forKey: "weekStudySeconds")
+        self.allTimeStudySeconds = defaults.integer(forKey: "allTimeStudySeconds")
         self.sessionsCompleted = defaults.integer(forKey: "sessionsCompleted")
         self.currentStreak = defaults.integer(forKey: "currentStreak")
         if let date = defaults.object(forKey: "lastStudyDate") as? Date {
@@ -217,16 +224,25 @@ class StatsManager: ObservableObject {
         } else {
             self.lastStudyDate = nil
         }
+        if let date = defaults.object(forKey: "weekStartDate") as? Date {
+            self.weekStartDate = date
+        } else {
+            self.weekStartDate = nil
+        }
         checkAndResetIfNeeded()
     }
     
     func save() {
         defaults.set(todayStudySeconds, forKey: "todayStudySeconds")
         defaults.set(weekStudySeconds, forKey: "weekStudySeconds")
+        defaults.set(allTimeStudySeconds, forKey: "allTimeStudySeconds")
         defaults.set(sessionsCompleted, forKey: "sessionsCompleted")
         defaults.set(currentStreak, forKey: "currentStreak")
         if let date = lastStudyDate {
             defaults.set(date, forKey: "lastStudyDate")
+        }
+        if let date = weekStartDate {
+            defaults.set(date, forKey: "weekStartDate")
         }
     }
     
@@ -238,6 +254,7 @@ class StatsManager: ObservableObject {
         if let lastDate = lastStudyDate {
             if !calendar.isDateInToday(lastDate) {
                 todayStudySeconds = 0
+                sessionsCompleted = 0
                 
                 // Check streak
                 if calendar.isDateInYesterday(lastDate) {
@@ -251,7 +268,13 @@ class StatsManager: ObservableObject {
             // Reset weekly stats if it's a new week
             if !calendar.isDate(lastDate, equalTo: now, toGranularity: .weekOfYear) {
                 weekStudySeconds = 0
+                weekStartDate = calendar.startOfDay(for: now)
             }
+        }
+        
+        // Set week start date if not set
+        if weekStartDate == nil {
+            weekStartDate = calendar.startOfDay(for: now)
         }
     }
     
@@ -270,6 +293,7 @@ class StatsManager: ObservableObject {
         
         todayStudySeconds += seconds
         weekStudySeconds += seconds
+        allTimeStudySeconds += seconds
         sessionsCompleted += 1
         lastStudyDate = now
     }
@@ -282,10 +306,40 @@ class StatsManager: ObservableObject {
         formatTime(seconds: weekStudySeconds)
     }
     
+    var allTimeFormatted: String {
+        formatTimeLong(seconds: allTimeStudySeconds)
+    }
+    
+    var weeklyAverageFormatted: String {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        // Calculate days elapsed in current week
+        var daysElapsed = 1
+        if let startDate = weekStartDate {
+            let components = calendar.dateComponents([.day], from: startDate, to: now)
+            daysElapsed = max(1, (components.day ?? 0) + 1)
+        }
+        
+        let averageSeconds = weekStudySeconds / daysElapsed
+        return formatTime(seconds: averageSeconds)
+    }
+    
     private func formatTime(seconds: Int) -> String {
         let hours = seconds / 3600
         let minutes = (seconds % 3600) / 60
         if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        }
+        return "\(minutes)m"
+    }
+    
+    private func formatTimeLong(seconds: Int) -> String {
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        if hours >= 100 {
+            return "\(hours)h"
+        } else if hours > 0 {
             return "\(hours)h \(minutes)m"
         }
         return "\(minutes)m"
@@ -476,6 +530,61 @@ class AppSettings: ObservableObject {
 }
 
 // MARK: - Live Activity Manager
+// MARK: - Timer State Persistence
+class TimerStateManager {
+    static let shared = TimerStateManager()
+    
+    private let defaults = UserDefaults.standard
+    private let timerRunningKey = "timerRunning"
+    private let isStudyKey = "isStudy"
+    private let timerEndTimeKey = "timerEndTime"
+    private let timerStartTimeKey = "timerStartTime"
+    private let consecutiveSessionsKey = "consecutiveSessions"
+    private let isLongBreakKey = "isLongBreak"
+    private let studyTimeKey = "savedStudyTime"
+    private let restTimeKey = "savedRestTime"
+    
+    func saveState(timerRunning: Bool, isStudy: Bool, timerStartTime: Date?, timerEndTime: Date?, consecutiveSessions: Int, isLongBreak: Bool, studyTime: Int, restTime: Int) {
+        defaults.set(timerRunning, forKey: timerRunningKey)
+        defaults.set(isStudy, forKey: isStudyKey)
+        defaults.set(timerStartTime, forKey: timerStartTimeKey)
+        defaults.set(timerEndTime, forKey: timerEndTimeKey)
+        defaults.set(consecutiveSessions, forKey: consecutiveSessionsKey)
+        defaults.set(isLongBreak, forKey: isLongBreakKey)
+        defaults.set(studyTime, forKey: studyTimeKey)
+        defaults.set(restTime, forKey: restTimeKey)
+        print("💾 Timer state saved: running=\(timerRunning), isStudy=\(isStudy), endTime=\(String(describing: timerEndTime))")
+    }
+    
+    func loadState() -> (timerRunning: Bool, isStudy: Bool, timerStartTime: Date?, timerEndTime: Date?, consecutiveSessions: Int, isLongBreak: Bool, studyTime: Int, restTime: Int)? {
+        let timerRunning = defaults.bool(forKey: timerRunningKey)
+        guard timerRunning else { return nil }
+        
+        let isStudy = defaults.bool(forKey: isStudyKey)
+        let timerStartTime = defaults.object(forKey: timerStartTimeKey) as? Date
+        let timerEndTime = defaults.object(forKey: timerEndTimeKey) as? Date
+        let consecutiveSessions = defaults.integer(forKey: consecutiveSessionsKey)
+        let isLongBreak = defaults.bool(forKey: isLongBreakKey)
+        let studyTime = defaults.integer(forKey: studyTimeKey)
+        let restTime = defaults.integer(forKey: restTimeKey)
+        
+        print("📂 Timer state loaded: running=\(timerRunning), isStudy=\(isStudy), endTime=\(String(describing: timerEndTime))")
+        return (timerRunning, isStudy, timerStartTime, timerEndTime, consecutiveSessions, isLongBreak, studyTime, restTime)
+    }
+    
+    func clearState() {
+        defaults.removeObject(forKey: timerRunningKey)
+        defaults.removeObject(forKey: isStudyKey)
+        defaults.removeObject(forKey: timerStartTimeKey)
+        defaults.removeObject(forKey: timerEndTimeKey)
+        defaults.removeObject(forKey: consecutiveSessionsKey)
+        defaults.removeObject(forKey: isLongBreakKey)
+        defaults.removeObject(forKey: studyTimeKey)
+        defaults.removeObject(forKey: restTimeKey)
+        print("🗑️ Timer state cleared")
+    }
+}
+
 class LiveActivityManager: ObservableObject {
     @Published var currentActivity: Activity<OdoroTimerAttributes>?
     
@@ -521,7 +630,7 @@ class LiveActivityManager: ObservableObject {
         do {
             let activity = try Activity.request(
                 attributes: attributes,
-                content: .init(state: contentState, staleDate: endTime.addingTimeInterval(60)),
+                content: .init(state: contentState, staleDate: endTime),
                 pushType: nil
             )
             currentActivity = activity
@@ -581,7 +690,6 @@ class CameraManager: NSObject, ObservableObject {
     private var captureSession: AVCaptureSession?
     private var videoOutput: AVCaptureVideoDataOutput?
     private var captureTimer: Timer?
-    private let captureInterval: TimeInterval = 0.5
     private var shouldCaptureFrame = false
     
     private let sessionQueue = DispatchQueue(label: "cameraSessionQueue")
@@ -596,10 +704,51 @@ class CameraManager: NSObject, ObservableObject {
     private var videoSize: CGSize?
     private var isWriterReady = false
     
+    // Dynamic interval tracking
+    private var recordingStartTime: Date?
+    private var currentInterval: TimeInterval = 1.0  // Start at 1 fps (less aggressive)
+    
+    // Preview optimization - only update every N frames
+    private var previewFrameCounter = 0
+    private let previewUpdateInterval = 30  // Update preview every 30 frames (~2 per second at 15fps)
+    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])  // Reuse context
+    
     var onTimelapseComplete: ((URL?) -> Void)?
     
     override init() {
         super.init()
+    }
+    
+    // Apple-style dynamic interval based on recording duration
+    private func getInterval(forElapsedMinutes minutes: Double) -> TimeInterval {
+        switch minutes {
+        case 0..<10:
+            return 1.0    // 1 fps (reduced from 2 fps for less heat)
+        case 10..<20:
+            return 2.0    // 1 frame every 2 seconds
+        case 20..<40:
+            return 4.0    // 1 frame every 4 seconds
+        case 40..<80:
+            return 6.0    // 1 frame every 6 seconds
+        default:
+            return 8.0    // 1 frame every 8 seconds for very long recordings
+        }
+    }
+    
+    private func updateCaptureInterval() {
+        guard let startTime = recordingStartTime else { return }
+        let elapsedMinutes = Date().timeIntervalSince(startTime) / 60.0
+        let newInterval = getInterval(forElapsedMinutes: elapsedMinutes)
+        
+        if newInterval != currentInterval {
+            currentInterval = newInterval
+            // Restart timer with new interval
+            captureTimer?.invalidate()
+            captureTimer = Timer.scheduledTimer(withTimeInterval: currentInterval, repeats: true) { [weak self] _ in
+                self?.shouldCaptureFrame = true
+            }
+            print("📸 Timelapse interval changed to \(currentInterval)s at \(String(format: "%.1f", elapsedMinutes)) minutes")
+        }
     }
     
     func requestPermission(completion: @escaping (Bool) -> Void) {
@@ -625,12 +774,22 @@ class CameraManager: NSObject, ObservableObject {
     
     private func setupCameraSession() {
         captureSession = AVCaptureSession()
-        captureSession?.sessionPreset = .high
+        captureSession?.sessionPreset = .medium  // Balanced resolution for quality/performance
         
         guard let frontCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
               let input = try? AVCaptureDeviceInput(device: frontCamera) else {
             return
         }
+        
+        // Optimize camera for lower power consumption
+        try? frontCamera.lockForConfiguration()
+        if frontCamera.isLowLightBoostSupported {
+            frontCamera.automaticallyEnablesLowLightBoostWhenAvailable = false
+        }
+        // Reduce frame rate to 15 fps for less heat
+        frontCamera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 15)
+        frontCamera.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 15)
+        frontCamera.unlockForConfiguration()
         
         if captureSession?.canAddInput(input) == true {
             captureSession?.addInput(input)
@@ -661,10 +820,14 @@ class CameraManager: NSObject, ObservableObject {
             self.frameCount = 0
             self.isWriterReady = false
             self.videoSize = nil
+            self.recordingStartTime = Date()
+            self.currentInterval = 1.0  // Start at 1 fps
+            self.previewFrameCounter = 0
         }
         
-        captureTimer = Timer.scheduledTimer(withTimeInterval: captureInterval, repeats: true) { [weak self] _ in
+        captureTimer = Timer.scheduledTimer(withTimeInterval: currentInterval, repeats: true) { [weak self] _ in
             self?.shouldCaptureFrame = true
+            self?.updateCaptureInterval()
         }
     }
     
@@ -684,8 +847,8 @@ class CameraManager: NSObject, ObservableObject {
                 AVVideoWidthKey: size.width,
                 AVVideoHeightKey: size.height,
                 AVVideoCompressionPropertiesKey: [
-                    AVVideoAverageBitRateKey: 2000000,
-                    AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
+                    AVVideoAverageBitRateKey: 1000000,  // Reduced bitrate for less processing
+                    AVVideoProfileLevelKey: AVVideoProfileLevelH264MainAutoLevel  // Simpler profile
                 ]
             ]
             
@@ -800,6 +963,9 @@ class CameraManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.isRecording = false
             self.previewImage = nil
+            self.recordingStartTime = nil
+            self.currentInterval = 1.0
+            self.previewFrameCounter = 0
         }
         
         sessionQueue.sync { [weak self] in
@@ -815,6 +981,22 @@ class CameraManager: NSObject, ObservableObject {
             self?.pixelBufferAdaptor = nil
             self?.isWriterReady = false
         }
+    }
+    
+    func pauseSession() {
+        sessionQueue.async { [weak self] in
+            self?.captureSession?.stopRunning()
+        }
+        print("📷 Camera session paused")
+    }
+    
+    func resumeSession() {
+        sessionQueue.async { [weak self] in
+            if self?.captureSession?.isRunning == false {
+                self?.captureSession?.startRunning()
+            }
+        }
+        print("📷 Camera session resumed")
     }
     
     func stopAndSave(completion: (() -> Void)? = nil) {
@@ -833,52 +1015,60 @@ class CameraManager: NSObject, ObservableObject {
 
 extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let context = CIContext()
-        
-        guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return }
-        let image = UIImage(cgImage: cgImage)
-        
-        DispatchQueue.main.async {
-            self.previewImage = image
-        }
-        
-        if isRecording && shouldCaptureFrame {
-            shouldCaptureFrame = false
+        autoreleasepool {
+            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
             
-            if !isWriterReady && videoSize == nil {
-                let width = CVPixelBufferGetWidth(pixelBuffer)
-                let height = CVPixelBufferGetHeight(pixelBuffer)
-                setupAssetWriter(size: CGSize(width: width, height: height))
+            // Only update preview every N frames to reduce CPU/GPU usage and memory
+            previewFrameCounter += 1
+            if previewFrameCounter >= previewUpdateInterval {
+                previewFrameCounter = 0
+                
+                autoreleasepool {
+                    let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+                    if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
+                        let image = UIImage(cgImage: cgImage)
+                        DispatchQueue.main.async { [weak self] in
+                            self?.previewImage = image
+                        }
+                    }
+                }
             }
             
-            if isWriterReady {
-                var copiedBuffer: CVPixelBuffer?
-                let width = CVPixelBufferGetWidth(pixelBuffer)
-                let height = CVPixelBufferGetHeight(pixelBuffer)
+            if isRecording && shouldCaptureFrame {
+                shouldCaptureFrame = false
                 
-                CVPixelBufferCreate(kCFAllocatorDefault, width, height,
-                                   CVPixelBufferGetPixelFormatType(pixelBuffer),
-                                   nil, &copiedBuffer)
+                if !isWriterReady && videoSize == nil {
+                    let width = CVPixelBufferGetWidth(pixelBuffer)
+                    let height = CVPixelBufferGetHeight(pixelBuffer)
+                    setupAssetWriter(size: CGSize(width: width, height: height))
+                }
                 
-                if let copiedBuffer = copiedBuffer {
-                    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-                    CVPixelBufferLockBaseAddress(copiedBuffer, [])
+                if isWriterReady {
+                    var copiedBuffer: CVPixelBuffer?
+                    let width = CVPixelBufferGetWidth(pixelBuffer)
+                    let height = CVPixelBufferGetHeight(pixelBuffer)
                     
-                    let srcData = CVPixelBufferGetBaseAddress(pixelBuffer)
-                    let destData = CVPixelBufferGetBaseAddress(copiedBuffer)
-                    let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+                    CVPixelBufferCreate(kCFAllocatorDefault, width, height,
+                                       CVPixelBufferGetPixelFormatType(pixelBuffer),
+                                       nil, &copiedBuffer)
                     
-                    if let srcData = srcData, let destData = destData {
-                        memcpy(destData, srcData, bytesPerRow * height)
+                    if let copiedBuffer = copiedBuffer {
+                        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+                        CVPixelBufferLockBaseAddress(copiedBuffer, [])
+                        
+                        let srcData = CVPixelBufferGetBaseAddress(pixelBuffer)
+                        let destData = CVPixelBufferGetBaseAddress(copiedBuffer)
+                        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+                        
+                        if let srcData = srcData, let destData = destData {
+                            memcpy(destData, srcData, bytesPerRow * height)
+                        }
+                        
+                        CVPixelBufferUnlockBaseAddress(copiedBuffer, [])
+                        CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+                        
+                        appendFrame(pixelBuffer: copiedBuffer)
                     }
-                    
-                    CVPixelBufferUnlockBaseAddress(copiedBuffer, [])
-                    CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
-                    
-                    appendFrame(pixelBuffer: copiedBuffer)
                 }
             }
         }
@@ -1498,140 +1688,101 @@ struct PickerScreen: View {
     @ObservedObject var settings: AppSettings
     @Environment(\.colorScheme) var colorScheme
 
-    @State private var showImage = false
-    @State private var showPickers = false
-    @State private var showButton = false
-    @State private var showStats = false
+    @State private var showContent = false
     
     @Environment(\.verticalSizeClass) var verticalSizeClass
     var isLandscape: Bool { verticalSizeClass == .compact }
     
     var body: some View {
-        ZStack {
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: isLandscape ? 12 : 20) {
-                    if colorScheme == .light {
-                        Image("logo2")
-                            .resizable().scaledToFit()
-                            .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
-                            .cornerRadius(10)
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white, lineWidth: 3))
-                            .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
-                            .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
-                    } else {
-                        Image("logo3")
-                            .resizable().scaledToFit()
-                            .frame(width: isLandscape ? 35 : 45, height: isLandscape ? 35 : 45)
-                            .cornerRadius(10)
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white, lineWidth: 3))
-                            .offset(y: showImage ? 0 : UIScreen.main.bounds.height)
-                            .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showImage)
-                    }
+        GeometryReader { geo in
+            ZStack {
+                AnimatedMeshBackground()
+                
+                VStack(spacing: 0) {
+                    Spacer()
                     
                     if !choicesMade {
-                        HStack {
-                            VStack(spacing: isLandscape ? 4 : 8) {
-                                Text("Lock In Time").font(isLandscape ? .headline : .title).bold()
-                                Picker("Lock In Time", selection: $studyTime) {
-                                    ForEach(1...60, id: \.self) { Text("\($0) min").foregroundStyle(.white).bold() }
-                                }
-                                .frame(maxWidth: 350, maxHeight: isLandscape ? 120 : nil)
-                                .shadow(radius: 20)
-                                .pickerStyle(.wheel)
-                                .background(.ultraThinMaterial)
-                                .cornerRadius(isLandscape ? 20 : 30)
-                                .overlay(RoundedRectangle(cornerRadius: isLandscape ? 20 : 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
-                            }
-                            .padding(.horizontal)
-                            
-                            VStack(spacing: isLandscape ? 4 : 8) {
-                                Text("Chill Time").font(isLandscape ? .headline : .title).bold()
-                                Picker("Chill Time", selection: $restTime) {
-                                    ForEach(1...60, id: \.self) { Text("\($0) min").foregroundStyle(.white).bold() }
-                                }
-                                .frame(maxWidth: 350, maxHeight: isLandscape ? 120 : nil)
-                                .shadow(radius: 20)
-                                .pickerStyle(.wheel)
-                                .background(.ultraThinMaterial)
-                                .cornerRadius(isLandscape ? 20 : 30)
-                                .overlay(RoundedRectangle(cornerRadius: isLandscape ? 20 : 30).stroke(Color.white.opacity(0.5), lineWidth: 2))
-                            }
-                            .padding(.horizontal)
-                        }
-                        .offset(y: showPickers ? 0 : UIScreen.main.bounds.height)
-                        .animation(.spring(response: 0.6, dampingFraction: 0.75), value: showPickers)
-                        
-                        Button("Done") { choicesMade = true }
-                            .frame(width: 75, height: 30)
-                            .foregroundStyle(.white)
-                            .background(.blue.opacity(0.7))
-                            .clipShape(.capsule)
-                            .shadow(radius: 20)
-                            .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white, lineWidth: 3))
-                            .offset(y: showButton ? 0 : UIScreen.main.bounds.height)
-                            .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.2), value: showButton)
-                        
-                        VStack(spacing: isLandscape ? 10 : 16) {
-                            Button {
-                                withAnimation(.spring(response: 0.4)) { showStats.toggle() }
-                            } label: {
-                                HStack {
-                                    Image(systemName: "chart.bar.fill")
-                                    Text("Your Stats").font(.headline)
-                                    Spacer()
-                                    Image(systemName: showStats ? "chevron.up" : "chevron.down")
-                                }
+                        // Titles above pickers
+                        HStack(spacing: 12) {
+                            Text("Lock In Time")
+                                .font(.title2.weight(.bold))
                                 .foregroundColor(.white)
-                                .padding(isLandscape ? 12 : 16)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 16).fill(.ultraThinMaterial)
-                                        .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.3), lineWidth: 1))
-                                )
-                            }
+                                .frame(maxWidth: .infinity)
                             
-                            if showStats {
-                                VStack(spacing: isLandscape ? 10 : 16) {
-                                    HStack(spacing: 16) {
-                                        PickerStatBox(title: "Today", value: stats.todayFormatted, icon: "sun.max.fill", color: .orange)
-                                        PickerStatBox(title: "This Week", value: stats.weekFormatted, icon: "calendar", color: .blue)
-                                    }
-                                    HStack(spacing: 16) {
-                                        PickerStatBox(title: "Sessions", value: "\(stats.sessionsCompleted)", icon: "checkmark.circle.fill", color: .green)
-                                        PickerStatBox(title: "Streak", value: "\(stats.currentStreak) days", icon: "flame.fill", color: .red)
-                                    }
-                                }
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                            }
+                            Text("Chill Time")
+                                .font(.title2.weight(.bold))
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
                         }
-                        .padding(.horizontal, 24)
-                        .padding(.top, isLandscape ? 10 : 20)
-                        .offset(y: showButton ? 0 : UIScreen.main.bounds.height)
-                        .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.3), value: showButton)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 12)
+                        
+                        // Pickers side by side
+                        HStack(spacing: 12) {
+                            ModernPickerCard(
+                                selection: $studyTime,
+                                height: isLandscape ? geo.size.height * 0.5 : geo.size.height * 0.65
+                            )
+                            
+                            ModernPickerCard(
+                                selection: $restTime,
+                                height: isLandscape ? geo.size.height * 0.5 : geo.size.height * 0.65
+                            )
+                        }
+                        .padding(.horizontal, 16)
+                        
+                        // Done button
+                        Button {
+                            choicesMade = true
+                        } label: {
+                            Text("Done")
+                                .font(.body.weight(.semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 10)
+                                .background(
+                                    Capsule()
+                                        .fill(.blue.opacity(0.7))
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(.white, lineWidth: 2)
+                                        )
+                                )
+                                .shadow(radius: 10)
+                        }
+                        .padding(.top, 24)
                     }
-                }
-                .padding(.vertical, isLandscape ? 20 : 40)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .foregroundStyle(.white)
-            .safeAreaInset(edge: .top) { Color.clear.frame(height: 0) }
-            .background(AnimatedMeshBackground())
-            
-            VStack {
-                HStack {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.25)) { showTimerFlow = false }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 18, weight: .semibold))
-                            .frame(width: 24, height: 24).foregroundColor(.white)
-                            .padding(12)
-                            .background(Circle().fill(.ultraThinMaterial).overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1)))
-                            .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
-                    }
-                    .padding(.leading, 20).padding(.top, 8)
+                    
                     Spacer()
                 }
-                Spacer()
+                .opacity(showContent ? 1 : 0)
+                .offset(y: showContent ? 0 : 30)
+                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showContent)
+                
+                // Back button
+                VStack {
+                    HStack {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.25)) { showTimerFlow = false }
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 18, weight: .semibold))
+                                .frame(width: 24, height: 24)
+                                .foregroundColor(.white)
+                                .padding(12)
+                                .background(
+                                    Circle()
+                                        .fill(.ultraThinMaterial)
+                                        .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
+                                )
+                                .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
+                        }
+                        .padding(.leading, 20)
+                        .padding(.top, 8)
+                        Spacer()
+                    }
+                    Spacer()
+                }
             }
         }
         .gesture(
@@ -1643,31 +1794,115 @@ struct PickerScreen: View {
                 }
         )
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showImage = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { showPickers = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { showButton = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showContent = true }
         }
     }
 }
 
-struct PickerStatBox: View {
-    let title: String
-    let value: String
-    let icon: String
-    let color: Color
-    
+// MARK: - Modern Picker Card
+struct ModernPickerCard: View {
+    @Binding var selection: Int
+    let height: CGFloat
+    @Environment(\.colorScheme) var colorScheme
+    @State private var scrollPosition: Int?
+
+    private let itemHeight: CGFloat = 50
+
+    private func pixelAlign(_ value: CGFloat) -> CGFloat {
+        let scale = UIScreen.main.scale
+        return (value * scale).rounded() / scale
+    }
+
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon).font(.title3).foregroundColor(color)
-            Text(value).font(.headline).foregroundColor(.white)
-            Text(title).font(.caption).foregroundColor(.white.opacity(0.7))
+        GeometryReader { geo in
+            let inset = pixelAlign(max(0, (geo.size.height - itemHeight) / 2))
+
+            ZStack {
+                // Background
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(.ultraThinMaterial.opacity(colorScheme == .light ? 0.25 : 1))
+
+                // Scrollable numbers (no spacer rows)
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(1...60, id: \.self) { num in
+                            Text("\(num)")
+                                .font(.system(size: 34, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundColor(scrollPosition == num ? .white : .white.opacity(0.4))
+                                .frame(height: itemHeight)
+                                .frame(maxWidth: .infinity)
+                                .contentShape(Rectangle())
+                                .id(num)
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .contentMargins(.vertical, inset, for: .scrollContent)
+                .scrollPosition(id: $scrollPosition, anchor: .center)
+                .scrollTargetBehavior(.viewAligned)
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .white, location: 0.25),
+                            .init(color: .white, location: 0.75),
+                            .init(color: .clear, location: 1)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+
+                // Selector overlay
+                LiquidGlassSelector(height: itemHeight)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
-        .background(
-            RoundedRectangle(cornerRadius: 16).fill(.ultraThinMaterial)
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.2), lineWidth: 1))
-        )
+        .frame(height: height)
+        .task {
+            // Keep in range just in case
+            selection = min(max(selection, 1), 60)
+            scrollPosition = selection
+        }
+        .onChange(of: scrollPosition) { _, newValue in
+            if let v = newValue { selection = v }
+        }
+        .onChange(of: selection) { _, newValue in
+            let v = min(max(newValue, 1), 60)
+            if scrollPosition != v { scrollPosition = v }
+        }
+    }
+}
+
+struct LiquidGlassSelector: View {
+    let height: CGFloat
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: height * 0.42, style: .continuous)
+
+        shape
+            .fill(.ultraThinMaterial)
+            .opacity(0.08)
+            .overlay(      // highlight (keep subtle)
+                shape.fill(
+                    LinearGradient(
+                        colors: [
+                            .white.opacity(0.10),
+                            .white.opacity(0.05),
+                            .clear
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .blendMode(.overlay)
+            )
+            .overlay(shape.stroke(.white.opacity(0.22), lineWidth: 1))
+            .shadow(color: .black.opacity(0.20), radius: 14, x: 0, y: 10)
+            .frame(height: height)
+            .padding(.horizontal, 10)
     }
 }
 
@@ -1883,7 +2118,10 @@ struct TimerScreen: View {
             }
         }
         .onTapGesture { showUITemporarily() }
-        .onAppear { showUITemporarily() }
+        .onAppear {
+            showUITemporarily()
+            restoreTimerStateIfNeeded()
+        }
         .onReceive(timer) { _ in
             guard timerRunning, let endTime = timerEndTime else { return }
             
@@ -1905,18 +2143,49 @@ struct TimerScreen: View {
             updateTimerFromBackground()
             if timerRunning && !batterySaverMode { motionManager.startMotionUpdates() }
             
+            // Resume camera if it was active
+            if showCameraPreview {
+                cameraManager.resumeSession()
+            }
+            
             // If timer is not running, clean up any orphaned Live Activities
             if !timerRunning {
                 liveActivityManager.cleanupOrphanedActivities()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
-            if timerRunning { backgroundTime = Date() }
+            if timerRunning {
+                backgroundTime = Date()
+                // Save timer state in case iOS kills the app
+                TimerStateManager.shared.saveState(
+                    timerRunning: timerRunning,
+                    isStudy: isStudy,
+                    timerStartTime: timerStartTime,
+                    timerEndTime: timerEndTime,
+                    consecutiveSessions: consecutiveSessions,
+                    isLongBreak: isLongBreak,
+                    studyTime: studyTime,
+                    restTime: restTime
+                )
+            }
             motionManager.stopMotionUpdates()
+            // Pause camera to save memory/battery in background
+            cameraManager.pauseSession()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
-            // End Live Activity when app is terminated
-            liveActivityManager.endActivity()
+            // Save state but keep Live Activity running
+            if timerRunning {
+                TimerStateManager.shared.saveState(
+                    timerRunning: timerRunning,
+                    isStudy: isStudy,
+                    timerStartTime: timerStartTime,
+                    timerEndTime: timerEndTime,
+                    consecutiveSessions: consecutiveSessions,
+                    isLongBreak: isLongBreak,
+                    studyTime: studyTime,
+                    restTime: restTime
+                )
+            }
         }
         .alert("Timelapse", isPresented: $showTimelapseAlert) {
             Button("OK", role: .cancel) { }
@@ -1955,6 +2224,78 @@ struct TimerScreen: View {
         hideTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
             withAnimation(.easeInOut(duration: 0.3)) { showUI = false }
         }
+    }
+    
+    func restoreTimerStateIfNeeded() {
+        guard let state = TimerStateManager.shared.loadState() else { return }
+        guard let endTime = state.timerEndTime else { return }
+        
+        let remaining = Int(endTime.timeIntervalSince(Date()))
+        
+        if remaining > 0 {
+            // Timer is still running - restore state
+            isStudy = state.isStudy
+            timerStartTime = state.timerStartTime
+            timerEndTime = state.timerEndTime
+            consecutiveSessions = state.consecutiveSessions
+            isLongBreak = state.isLongBreak
+            secondsLeft = remaining
+            timerRunning = true
+            
+            // Restart Live Activity with correct state
+            if let startTime = timerStartTime {
+                liveActivityManager.startActivity(startTime: startTime, endTime: endTime, isStudy: isStudy, sessionNumber: consecutiveSessions + 1,
+                                                 totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
+            }
+            
+            print("♻️ Timer state restored: isStudy=\(isStudy), remaining=\(remaining)s")
+        } else {
+            // Timer completed while app was killed - handle phase transitions
+            var currentEndTime = endTime
+            var currentIsStudy = state.isStudy
+            var currentConsecutiveSessions = state.consecutiveSessions
+            var currentIsLongBreak = state.isLongBreak
+            let savedStudyTime = state.studyTime > 0 ? state.studyTime : studyTime
+            let savedRestTime = state.restTime > 0 ? state.restTime : restTime
+            
+            // Calculate how many phases have completed
+            while currentEndTime.timeIntervalSince(Date()) <= 0 {
+                if currentIsStudy {
+                    currentConsecutiveSessions += 1
+                    if settings.longBreakEnabled && currentConsecutiveSessions >= settings.sessionsUntilLongBreak {
+                        currentIsLongBreak = true
+                        currentConsecutiveSessions = 0
+                        currentEndTime = currentEndTime.addingTimeInterval(TimeInterval(settings.longBreakTime * 60))
+                    } else {
+                        currentIsLongBreak = false
+                        currentEndTime = currentEndTime.addingTimeInterval(TimeInterval(savedRestTime * 60))
+                    }
+                    currentIsStudy = false
+                } else {
+                    currentIsStudy = true
+                    currentIsLongBreak = false
+                    currentEndTime = currentEndTime.addingTimeInterval(TimeInterval(savedStudyTime * 60))
+                }
+            }
+            
+            // Set new state
+            isStudy = currentIsStudy
+            consecutiveSessions = currentConsecutiveSessions
+            isLongBreak = currentIsLongBreak
+            timerStartTime = Date()
+            timerEndTime = currentEndTime
+            secondsLeft = Int(currentEndTime.timeIntervalSince(Date()))
+            timerRunning = true
+            
+            // Start fresh Live Activity
+            liveActivityManager.startActivity(startTime: timerStartTime!, endTime: timerEndTime!, isStudy: isStudy, sessionNumber: consecutiveSessions + 1,
+                                             totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
+            
+            print("♻️ Timer state restored after completion: isStudy=\(isStudy), remaining=\(secondsLeft)s")
+        }
+        
+        // Clear saved state since we've restored it
+        TimerStateManager.shared.clearState()
     }
     
     func toggleTimer() {
@@ -2003,6 +2344,7 @@ struct TimerScreen: View {
         soundManager.stop()
         motionManager.stopMotionUpdates()
         liveActivityManager.endActivity()
+        TimerStateManager.shared.clearState()
     }
     
     func timerCompleted() {
@@ -2187,7 +2529,17 @@ struct ContentView: View {
 
     init() {
         let logoViewCount = UserDefaults.standard.integer(forKey: "logoViewCount")
-        _showLogoScreen = State(initialValue: logoViewCount < 2)
+        // Check if there's a saved timer running - skip logo screen
+        let timerRunning = UserDefaults.standard.bool(forKey: "timerRunning")
+        _showLogoScreen = State(initialValue: !timerRunning && logoViewCount < 2)
+        _showTimerFlow = State(initialValue: timerRunning)
+        _choicesMade = State(initialValue: timerRunning)
+        
+        // Restore study/rest times
+        let savedStudyTime = UserDefaults.standard.integer(forKey: "savedStudyTime")
+        let savedRestTime = UserDefaults.standard.integer(forKey: "savedRestTime")
+        if savedStudyTime > 0 { _studyTime = State(initialValue: savedStudyTime) }
+        if savedRestTime > 0 { _restTime = State(initialValue: savedRestTime) }
     }
 
     var body: some View {
@@ -2211,7 +2563,7 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.25), value: choicesMade)
         .onAppear {
             requestNotificationPermission()
-            // Clean up any orphaned Live Activities from previous app sessions
+            // Clean up any orphaned Live Activities if not in timer flow
             if !showTimerFlow {
                 LiveActivityManager.shared.cleanupOrphanedActivities()
             }
@@ -2221,8 +2573,9 @@ struct ContentView: View {
                 OrientationManager.shared.unlock()
             } else {
                 OrientationManager.shared.lockToPortrait()
-                // Clean up any Live Activities when leaving timer flow
+                // Clean up any Live Activities and saved state when leaving timer flow
                 LiveActivityManager.shared.cleanupOrphanedActivities()
+                TimerStateManager.shared.clearState()
             }
         }
     }
