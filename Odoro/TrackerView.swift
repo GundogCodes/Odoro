@@ -41,6 +41,7 @@ enum CellUnit: String, Codable, CaseIterable {
     case day = "Day"
     case week = "Week"
     case month = "Month"
+    case year = "Year"
     
     var displayName: String { rawValue }
     
@@ -49,6 +50,7 @@ enum CellUnit: String, Codable, CaseIterable {
         case .day: return "days"
         case .week: return "weeks"
         case .month: return "months"
+        case .year: return "years"
         }
     }
 }
@@ -64,6 +66,26 @@ enum GridDurationType: String, Codable, CaseIterable {
         case .customRange: return "Custom Range"
         case .toTargetDate: return "To Target Date"
         case .indefinite: return "Indefinite (Cycles)"
+        }
+    }
+}
+
+// Duration types available for timeline bar (no indefinite)
+enum BarDurationType: String, Codable, CaseIterable {
+    case customRange = "Custom Range"
+    case toTargetDate = "To Target Date"
+    
+    var displayName: String {
+        switch self {
+        case .customRange: return "Custom Range"
+        case .toTargetDate: return "To Target Date"
+        }
+    }
+    
+    var toGridDurationType: GridDurationType {
+        switch self {
+        case .customRange: return .customRange
+        case .toTargetDate: return .toTargetDate
         }
     }
 }
@@ -152,6 +174,8 @@ struct Habit: Identifiable, Codable {
                 return max(4, Int(ceil(Double(days) / 7.0)))
             case .month:
                 return max(4, calendar.dateComponents([.month], from: startDate, to: target).month ?? 0)
+            case .year:
+                return max(4, calendar.dateComponents([.year], from: startDate, to: target).year ?? 0)
             }
         case .indefinite:
             return maxCellCapacity
@@ -202,6 +226,8 @@ struct Habit: Identifiable, Codable {
             return max(0, days / 7)
         case .month:
             return max(0, calendar.dateComponents([.month], from: startDate, to: now).month ?? 0)
+        case .year:
+            return max(0, calendar.dateComponents([.year], from: startDate, to: now).year ?? 0)
         }
     }
     
@@ -592,6 +618,7 @@ struct ContributionGridView: View {
         case .day: unitSuffix = "d"
         case .week: unitSuffix = "w"
         case .month: unitSuffix = "mo"
+        case .year: unitSuffix = "y"
         }
         
         if habit.durationType == .indefinite {
@@ -857,8 +884,10 @@ struct TimelineBarView: View {
             
             Spacer(minLength: 0)
             
-            // Progress bar
-            ZStack(alignment: habit.type == .countdown ? .trailing : .leading) {
+            // Progress bar - always fills from left
+            // For countdown: starts full, decreases over time
+            // For count up: starts empty, increases over time
+            ZStack(alignment: .leading) {
                 // Background
                 RoundedRectangle(cornerRadius: isSmall ? 6 : 10)
                     .fill(.white.opacity(0.15))
@@ -911,22 +940,29 @@ struct TimelineBarView: View {
     }
     
     private var progress: CGFloat {
-        if habit.updateMode == .manual {
-            let total = habit.totalCells
-            guard total > 0 else { return 0 }
-            return CGFloat(habit.currentValue) / CGFloat(total)
-        }
-        
-        // Auto mode based on duration type
-        let filled = habit.filledCells(at: currentTime)
-        let total = habit.totalCells
+        let elapsed = habit.elapsedCells
+        let total = habit.totalDurationCells
         
         guard total > 0 else { return 0 }
-        return CGFloat(min(max(Double(filled) / Double(total), 0), 1))
+        
+        let rawProgress = CGFloat(min(max(Double(elapsed) / Double(total), 0), 1))
+        
+        // For countdown: start full (1.0) and decrease to empty (0.0)
+        // For count up: start empty (0.0) and increase to full (1.0)
+        if habit.type == .countdown {
+            return 1.0 - rawProgress
+        } else {
+            return rawProgress
+        }
     }
     
     private var progressText: String {
-        String(format: "%.1f%%", progress * 100)
+        // For countdown show remaining %, for count up show elapsed %
+        if habit.type == .countdown {
+            String(format: "%.1f%% left", progress * 100)
+        } else {
+            String(format: "%.1f%%", progress * 100)
+        }
     }
     
     private var startLabel: String {
@@ -936,12 +972,33 @@ struct TimelineBarView: View {
     }
     
     private var endLabel: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        
         if let target = habit.targetDate {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM d"
             return formatter.string(from: target)
         }
-        return habit.type == .countdown ? "Target" : "∞"
+        
+        // Calculate end date from duration
+        let calendar = Calendar.current
+        let endDate: Date?
+        
+        switch habit.cellUnit {
+        case .day:
+            endDate = calendar.date(byAdding: .day, value: habit.totalDurationCells, to: habit.startDate)
+        case .week:
+            endDate = calendar.date(byAdding: .weekOfYear, value: habit.totalDurationCells, to: habit.startDate)
+        case .month:
+            endDate = calendar.date(byAdding: .month, value: habit.totalDurationCells, to: habit.startDate)
+        case .year:
+            endDate = calendar.date(byAdding: .year, value: habit.totalDurationCells, to: habit.startDate)
+        }
+        
+        if let end = endDate {
+            return formatter.string(from: end)
+        }
+        
+        return "End"
     }
     
     private var mainTimeDisplay: String {
@@ -1027,13 +1084,16 @@ struct AddHabitSheet: View {
     @State private var customDuration: Int = 30
     @State private var targetDate = Calendar.current.date(byAdding: .day, value: 30, to: Date()) ?? Date()
     
+    // Timeline bar settings
+    @State private var barDurationType: BarDurationType = .customRange
+    
     // Display settings
     @State private var timeUnit: HabitTimeUnit = .days
     @State private var color: HabitColor = .blue
     
     @State private var currentPreviewPage = 0
     
-    // Minimum target date is current date + 4 days/weeks/months (minimum 4 cells)
+    // Minimum target date (4 units from now)
     private var minimumTargetDate: Date {
         let calendar = Calendar.current
         switch cellUnit {
@@ -1043,15 +1103,18 @@ struct AddHabitSheet: View {
             return calendar.date(byAdding: .weekOfYear, value: 4, to: Date()) ?? Date()
         case .month:
             return calendar.date(byAdding: .month, value: 4, to: Date()) ?? Date()
+        case .year:
+            return calendar.date(byAdding: .year, value: 4, to: Date()) ?? Date()
         }
     }
     
-    // Range limits for custom duration (minimum 4 cells)
+    // Range limits for custom duration
     private var customDurationRange: ClosedRange<Int> {
         switch cellUnit {
         case .day: return 4...365
         case .week: return 4...104
         case .month: return 4...120
+        case .year: return 4...50
         }
     }
     
@@ -1065,12 +1128,13 @@ struct AddHabitSheet: View {
     var body: some View {
         NavigationView {
             ScrollView {
-                VStack(spacing: 24) {
+                VStack(spacing: 28) {
                     // Style Preview Carousel
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Style Preview")
                             .font(.headline)
                             .foregroundColor(.primary)
+                            .padding(.horizontal)
                         
                         TabView(selection: $currentPreviewPage) {
                             ForEach(Array(HabitVisualStyle.allCases.enumerated()), id: \.element) { index, style in
@@ -1085,15 +1149,17 @@ struct AddHabitSheet: View {
                         }
                     }
                     
-                    // Name & Icon
-                    VStack(alignment: .leading, spacing: 12) {
+                    // Name & Icon Section
+                    VStack(alignment: .leading, spacing: 16) {
                         Text("Name & Icon")
                             .font(.headline)
                         
                         TextField("Habit name", text: $name)
-                            .textFieldStyle(.roundedBorder)
+                            .padding(12)
+                            .background(Color(.secondarySystemGroupedBackground))
+                            .cornerRadius(10)
                         
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
                             ForEach(icons, id: \.self) { iconName in
                                 Button {
                                     icon = iconName
@@ -1101,145 +1167,284 @@ struct AddHabitSheet: View {
                                     Image(systemName: iconName)
                                         .font(.title3)
                                         .foregroundColor(icon == iconName ? color.color : .secondary)
-                                        .frame(width: 36, height: 36)
+                                        .frame(width: 40, height: 40)
                                         .background(
                                             Circle()
-                                                .fill(icon == iconName ? color.color.opacity(0.2) : Color.gray.opacity(0.1))
+                                                .fill(icon == iconName ? color.color.opacity(0.2) : Color(.secondarySystemGroupedBackground))
                                         )
                                 }
                             }
                         }
                     }
+                    .padding(.horizontal)
                     
-                    // Type & Mode
-                    VStack(alignment: .leading, spacing: 12) {
+                    // Tracking Type Section
+                    VStack(alignment: .leading, spacing: 16) {
                         Text("Tracking Type")
                             .font(.headline)
                         
-                        Picker("Type", selection: $habitType) {
-                            ForEach(HabitType.allCases, id: \.self) { type in
-                                Text(type.rawValue).tag(type)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        
-                        // Manual mode only available for grid style
-                        if visualStyle == .grid {
-                            Picker("Update Mode", selection: $updateMode) {
-                                ForEach(HabitUpdateMode.allCases, id: \.self) { mode in
-                                    Text(mode.rawValue).tag(mode)
+                        VStack(spacing: 12) {
+                            Picker("Type", selection: $habitType) {
+                                ForEach(HabitType.allCases, id: \.self) { type in
+                                    Text(type.rawValue).tag(type)
                                 }
                             }
                             .pickerStyle(.segmented)
+                            
+                            // Manual mode only available for grid style
+                            if visualStyle == .grid {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Update Mode")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Picker("Update Mode", selection: $updateMode) {
+                                        ForEach(HabitUpdateMode.allCases, id: \.self) { mode in
+                                            Text(mode.rawValue).tag(mode)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                }
+                            }
                         }
                     }
+                    .padding(.horizontal)
                     .onChange(of: visualStyle) { _, newStyle in
-                        // Force auto mode for non-grid styles
                         if newStyle != .grid {
                             updateMode = .auto
                         }
+                        // Reset duration type for bar (no indefinite)
+                        if newStyle == .bar && durationType == .indefinite {
+                            durationType = .customRange
+                        }
                     }
                     
-                    // Grid Settings (for grid visual style)
+                    // Grid Settings Section
                     if visualStyle == .grid {
-                        VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 16) {
                             Text("Grid Settings")
                                 .font(.headline)
                             
-                            // Cell represents
+                            VStack(spacing: 16) {
+                                // Cell unit
+                                HStack {
+                                    Text("Each cell represents")
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Picker("Cell Unit", selection: $cellUnit) {
+                                        ForEach(CellUnit.allCases, id: \.self) { unit in
+                                            Text("1 \(unit.displayName)").tag(unit)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .tint(color.color)
+                                }
+                                .padding(14)
+                                .background(Color(.secondarySystemGroupedBackground))
+                                .cornerRadius(10)
+                                
+                                // Duration type
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Duration")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Picker("Duration", selection: $durationType) {
+                                        ForEach(GridDurationType.allCases, id: \.self) { type in
+                                            Text(type.displayName).tag(type)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                }
+                                
+                                // Duration value input
+                                switch durationType {
+                                case .customRange:
+                                    HStack {
+                                        Text("Duration")
+                                        Spacer()
+                                        Stepper(
+                                            "\(customDuration) \(cellUnit.pluralName)",
+                                            value: $customDuration,
+                                            in: customDurationRange
+                                        )
+                                    }
+                                    .padding(14)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                    .cornerRadius(10)
+                                    
+                                case .toTargetDate:
+                                    DatePicker(
+                                        "End Date",
+                                        selection: $targetDate,
+                                        in: minimumTargetDate...,
+                                        displayedComponents: .date
+                                    )
+                                    .padding(14)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                    .cornerRadius(10)
+                                    .onChange(of: cellUnit) { _, _ in
+                                        if targetDate < minimumTargetDate {
+                                            targetDate = minimumTargetDate
+                                        }
+                                    }
+                                    
+                                case .indefinite:
+                                    HStack {
+                                        Image(systemName: "arrow.trianglehead.2.counterclockwise.rotate.90")
+                                            .foregroundColor(color.color)
+                                        Text("Grid will cycle when filled")
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(14)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                    .cornerRadius(10)
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    // Timeline Bar Settings Section
+                    if visualStyle == .bar {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Timeline Settings")
+                                .font(.headline)
+                            
+                            VStack(spacing: 16) {
+                                // Duration type (no indefinite for bar)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Duration Type")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Picker("Duration", selection: $barDurationType) {
+                                        ForEach(BarDurationType.allCases, id: \.self) { type in
+                                            Text(type.displayName).tag(type)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .onChange(of: barDurationType) { _, newValue in
+                                        durationType = newValue.toGridDurationType
+                                    }
+                                }
+                                
+                                // Time unit for bar
+                                HStack {
+                                    Text("Time Unit")
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Picker("Time Unit", selection: $cellUnit) {
+                                        ForEach(CellUnit.allCases, id: \.self) { unit in
+                                            Text(unit.pluralName.capitalized).tag(unit)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .tint(color.color)
+                                }
+                                .padding(14)
+                                .background(Color(.secondarySystemGroupedBackground))
+                                .cornerRadius(10)
+                                
+                                // Duration value
+                                switch barDurationType {
+                                case .customRange:
+                                    HStack {
+                                        Text("Duration")
+                                        Spacer()
+                                        Stepper(
+                                            "\(customDuration) \(cellUnit.pluralName)",
+                                            value: $customDuration,
+                                            in: customDurationRange
+                                        )
+                                    }
+                                    .padding(14)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                    .cornerRadius(10)
+                                    
+                                case .toTargetDate:
+                                    DatePicker(
+                                        "End Date",
+                                        selection: $targetDate,
+                                        in: minimumTargetDate...,
+                                        displayedComponents: .date
+                                    )
+                                    .padding(14)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                    .cornerRadius(10)
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    // Text Counter Settings
+                    if visualStyle == .text {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Display Settings")
+                                .font(.headline)
+                            
                             HStack {
-                                Text("Each cell represents")
+                                Text("Show Time As")
+                                    .foregroundColor(.primary)
                                 Spacer()
-                                Picker("Cell Unit", selection: $cellUnit) {
-                                    ForEach(CellUnit.allCases, id: \.self) { unit in
-                                        Text("1 \(unit.displayName)").tag(unit)
+                                Picker("Time Unit", selection: $timeUnit) {
+                                    ForEach(HabitTimeUnit.allCases, id: \.self) { unit in
+                                        Text(unit.rawValue).tag(unit)
                                     }
                                 }
                                 .pickerStyle(.menu)
+                                .tint(color.color)
                             }
-                            
-                            // Duration type
-                            Picker("Duration", selection: $durationType) {
-                                ForEach(GridDurationType.allCases, id: \.self) { type in
-                                    Text(type.displayName).tag(type)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            
-                            // Custom duration or target date
-                            switch durationType {
-                            case .customRange:
-                                Stepper(
-                                    "\(customDuration) \(cellUnit.pluralName)",
-                                    value: $customDuration,
-                                    in: customDurationRange
-                                )
-                            case .toTargetDate:
-                                DatePicker(
-                                    "Target Date",
-                                    selection: $targetDate,
-                                    in: minimumTargetDate...,
-                                    displayedComponents: .date
-                                )
-                                .onChange(of: cellUnit) { _, _ in
-                                    // Adjust target date if it's now below minimum
-                                    if targetDate < minimumTargetDate {
-                                        targetDate = minimumTargetDate
-                                    }
-                                }
-                            case .indefinite:
-                                Text("Grid will cycle when filled")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
+                            .padding(14)
+                            .background(Color(.secondarySystemGroupedBackground))
+                            .cornerRadius(10)
                         }
+                        .padding(.horizontal)
                     }
                     
-                    // Display Options
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Display Options")
+                    // Widget Size Section
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Widget Size")
                             .font(.headline)
-                        
-                        if visualStyle == .text {
-                            Picker("Time Unit", selection: $timeUnit) {
-                                ForEach(HabitTimeUnit.allCases, id: \.self) { unit in
-                                    Text(unit.rawValue).tag(unit)
-                                }
-                            }
-                        }
                         
                         Picker("Widget Size", selection: $widgetSize) {
                             ForEach(HabitWidgetSize.allCases, id: \.self) { size in
-                                Text(size.rawValue).tag(size)
+                                Text(size.displayName).tag(size)
                             }
                         }
                         .pickerStyle(.segmented)
                     }
+                    .padding(.horizontal)
                     
-                    // Color
-                    VStack(alignment: .leading, spacing: 12) {
+                    // Color Section
+                    VStack(alignment: .leading, spacing: 16) {
                         Text("Color")
                             .font(.headline)
                         
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 14) {
                             ForEach(HabitColor.allCases, id: \.self) { c in
                                 Button {
                                     color = c
                                 } label: {
                                     Circle()
                                         .fill(c.color)
-                                        .frame(width: 36, height: 36)
+                                        .frame(width: 40, height: 40)
                                         .overlay(
                                             Circle()
                                                 .stroke(Color.white, lineWidth: color == c ? 3 : 0)
                                         )
-                                        .shadow(color: c.color.opacity(0.5), radius: color == c ? 5 : 0)
+                                        .shadow(color: c.color.opacity(0.5), radius: color == c ? 6 : 0)
                                 }
                             }
                         }
                     }
+                    .padding(.horizontal)
+                    
+                    Spacer(minLength: 20)
                 }
-                .padding()
+                .padding(.vertical)
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("New Habit")
@@ -1254,6 +1459,7 @@ struct AddHabitSheet: View {
                         dismiss()
                     }
                     .disabled(name.isEmpty)
+                    .fontWeight(.semibold)
                 }
             }
         }
@@ -1264,35 +1470,36 @@ struct AddHabitSheet: View {
             name: name.isEmpty ? "My Habit" : name,
             icon: icon,
             type: habitType,
-            updateMode: updateMode,
+            updateMode: style == .grid ? updateMode : .auto,
             visualStyle: style,
             widgetSize: .full,
             cellUnit: cellUnit,
-            durationType: durationType,
+            durationType: style == .bar ? barDurationType.toGridDurationType : durationType,
             customDuration: customDuration,
-            targetDate: durationType == .toTargetDate ? targetDate : nil,
+            targetDate: (durationType == .toTargetDate || barDurationType == .toTargetDate) ? targetDate : nil,
             timeUnit: timeUnit,
             color: color
         )
         
         // Set sample progress for preview (about 1/3 filled)
-        habit.currentValue = habit.totalCells / 3
+        habit.currentValue = habit.totalDurationCells / 3
         
         return habit
     }
     
     private func addHabit() {
+        let finalDurationType = visualStyle == .bar ? barDurationType.toGridDurationType : durationType
         let habit = Habit(
             name: name,
             icon: icon,
             type: habitType,
-            updateMode: updateMode,
+            updateMode: visualStyle == .grid ? updateMode : .auto,
             visualStyle: visualStyle,
             widgetSize: widgetSize,
             cellUnit: cellUnit,
-            durationType: durationType,
+            durationType: finalDurationType,
             customDuration: customDuration,
-            targetDate: (habitType == .countdown || durationType == .toTargetDate) ? targetDate : nil,
+            targetDate: (finalDurationType == .toTargetDate || habitType == .countdown) ? targetDate : nil,
             timeUnit: timeUnit,
             color: color
         )
