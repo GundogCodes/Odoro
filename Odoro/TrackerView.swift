@@ -28,6 +28,29 @@ enum HabitTimeUnit: String, Codable, CaseIterable {
     case years = "Years"
 }
 
+// What each tick on the timeline represents
+enum TimelineTickUnit: String, Codable, CaseIterable {
+    case minute = "Minutes"
+    case hour = "Hours"
+    case day = "Days"
+    case week = "Weeks"
+    case month = "Months"
+    case year = "Years"
+    
+    var displayName: String { rawValue }
+    
+    var singularName: String {
+        switch self {
+        case .minute: return "minute"
+        case .hour: return "hour"
+        case .day: return "day"
+        case .week: return "week"
+        case .month: return "month"
+        case .year: return "year"
+        }
+    }
+}
+
 enum HabitWidgetSize: String, Codable, CaseIterable {
     case half = "Small"           // Square 4x4 to 7x7
     case fullMedium = "Medium"    // Full width, same height as small
@@ -104,6 +127,9 @@ struct Habit: Identifiable, Codable {
     var durationType: GridDurationType  // How duration is calculated
     var customDuration: Int             // Number of days/months for customRange
     var targetDate: Date?               // For countdown or toTargetDate duration
+    var textCounterDuration: Int        // Duration value for text counter style
+    var timelineTickUnit: TimelineTickUnit  // What each tick represents on timeline
+    var timelineDuration: Int           // Duration value for timeline bar
     
     // Progress tracking
     var currentValue: Int               // Current progress (cells filled for manual)
@@ -129,6 +155,9 @@ struct Habit: Identifiable, Codable {
         durationType: GridDurationType = .customRange,
         customDuration: Int = 30,
         targetDate: Date? = nil,
+        textCounterDuration: Int = 30,
+        timelineTickUnit: TimelineTickUnit = .day,
+        timelineDuration: Int = 30,
         timeUnit: HabitTimeUnit = .days,
         color: HabitColor = .blue
     ) {
@@ -142,6 +171,9 @@ struct Habit: Identifiable, Codable {
         self.durationType = durationType
         self.customDuration = customDuration
         self.targetDate = targetDate
+        self.textCounterDuration = textCounterDuration
+        self.timelineTickUnit = timelineTickUnit
+        self.timelineDuration = timelineDuration
         self.currentValue = 0
         self.cycleCount = 0
         self.timeUnit = timeUnit
@@ -387,6 +419,16 @@ class HabitManager: ObservableObject {
             h.cycleCount = 0
             updateHabit(h)
         }
+    }
+    
+    func moveHabit(from sourceIndex: Int, to destinationIndex: Int) {
+        guard sourceIndex != destinationIndex,
+              sourceIndex >= 0, sourceIndex < habits.count,
+              destinationIndex >= 0, destinationIndex < habits.count else { return }
+        
+        let habit = habits.remove(at: sourceIndex)
+        habits.insert(habit, at: destinationIndex)
+        save()
     }
 }
 
@@ -713,12 +755,17 @@ struct TextCounterView: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
                 Spacer()
+                
+                // Show countdown/countup label
+                Text(habit.type == .countdown ? "remaining" : "elapsed")
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.5))
             }
             
             Spacer(minLength: 0)
             
             if isSmall {
-                // Small: Single large number centered
+                // Small: Show primary unit centered
                 VStack(spacing: 4) {
                     Text(primaryValue)
                         .font(.system(size: 36, weight: .bold, design: .rounded))
@@ -729,12 +776,12 @@ struct TextCounterView: View {
                 }
                 .frame(maxWidth: .infinity)
             } else {
-                // Medium/Large: Multiple time components
-                HStack(spacing: 12) {
-                    ForEach(timeComponents, id: \.label) { component in
+                // Medium/Large: Multiple time components based on time unit
+                HStack(spacing: isLarge ? 16 : 10) {
+                    ForEach(timeComponentsForUnit, id: \.label) { component in
                         VStack(spacing: 4) {
                             Text(component.value)
-                                .font(.system(size: isLarge ? 32 : 28, weight: .bold, design: .rounded))
+                                .font(.system(size: isLarge ? 32 : 26, weight: .bold, design: .rounded))
                                 .foregroundStyle(habit.color.gradient)
                             Text(component.label)
                                 .font(.caption2)
@@ -786,19 +833,59 @@ struct TextCounterView: View {
         }
     }
     
+    // Calculate target date for text counter based on duration and time unit
+    private var calculatedTargetDate: Date {
+        if let target = habit.targetDate {
+            return target
+        }
+        
+        // Calculate target from duration
+        let calendar = Calendar.current
+        let duration = habit.textCounterDuration
+        
+        switch habit.timeUnit {
+        case .seconds:
+            return calendar.date(byAdding: .second, value: duration, to: habit.startDate) ?? habit.startDate
+        case .minutes:
+            return calendar.date(byAdding: .minute, value: duration, to: habit.startDate) ?? habit.startDate
+        case .hours:
+            return calendar.date(byAdding: .hour, value: duration, to: habit.startDate) ?? habit.startDate
+        case .days:
+            return calendar.date(byAdding: .day, value: duration, to: habit.startDate) ?? habit.startDate
+        case .weeks:
+            return calendar.date(byAdding: .weekOfYear, value: duration, to: habit.startDate) ?? habit.startDate
+        case .months:
+            return calendar.date(byAdding: .month, value: duration, to: habit.startDate) ?? habit.startDate
+        case .years:
+            return calendar.date(byAdding: .year, value: duration, to: habit.startDate) ?? habit.startDate
+        }
+    }
+    
     private var timeInterval: TimeInterval {
         if habit.type == .countdown {
-            return (habit.targetDate ?? Date()).timeIntervalSince(currentTime)
+            return calculatedTargetDate.timeIntervalSince(currentTime)
         } else {
             return currentTime.timeIntervalSince(habit.startDate)
         }
     }
     
     private var progressToTarget: CGFloat {
-        let filled = habit.filledCells(at: currentTime)
-        let total = habit.totalCells
-        guard total > 0 else { return 0 }
-        return CGFloat(min(max(Double(filled) / Double(total), 0), 1))
+        let totalInterval: TimeInterval
+        if habit.type == .countdown {
+            totalInterval = calculatedTargetDate.timeIntervalSince(habit.startDate)
+        } else {
+            totalInterval = calculatedTargetDate.timeIntervalSince(habit.startDate)
+        }
+        
+        guard totalInterval > 0 else { return 0 }
+        
+        let elapsed = currentTime.timeIntervalSince(habit.startDate)
+        let progress = CGFloat(min(max(elapsed / totalInterval, 0), 1))
+        
+        if habit.type == .countdown {
+            return 1.0 - progress
+        }
+        return progress
     }
     
     private var primaryValue: String {
@@ -823,25 +910,88 @@ struct TextCounterView: View {
         let label: String
     }
     
-    private var timeComponents: [TimeComponent] {
+    // Time components based on the selected time unit
+    // If days selected: days:hours:minutes:seconds
+    // If years selected: years:months:days:hours:minutes:seconds
+    private var timeComponentsForUnit: [TimeComponent] {
         let interval = abs(timeInterval)
-        let days = Int(interval / 86400)
-        let hours = Int(interval.truncatingRemainder(dividingBy: 86400) / 3600)
-        let minutes = Int(interval.truncatingRemainder(dividingBy: 3600) / 60)
-        let seconds = Int(interval.truncatingRemainder(dividingBy: 60))
         
-        if days > 0 {
+        let totalSeconds = Int(interval)
+        let seconds = totalSeconds % 60
+        let totalMinutes = totalSeconds / 60
+        let minutes = totalMinutes % 60
+        let totalHours = totalMinutes / 60
+        let hours = totalHours % 24
+        let totalDays = totalHours / 24
+        let days = totalDays % 7
+        let weeks = totalDays / 7
+        
+        // For months/years, use calendar-based calculation for accuracy
+        let calendar = Calendar.current
+        let referenceDate = habit.type == .countdown ? currentTime : habit.startDate
+        let targetForCalc = habit.type == .countdown ? calculatedTargetDate : currentTime
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: referenceDate, to: targetForCalc)
+        
+        let years = abs(components.year ?? 0)
+        let months = abs(components.month ?? 0)
+        let calendarDays = abs(components.day ?? 0)
+        let calendarHours = abs(components.hour ?? 0)
+        let calendarMinutes = abs(components.minute ?? 0)
+        let calendarSeconds = abs(components.second ?? 0)
+        
+        switch habit.timeUnit {
+        case .seconds:
             return [
+                TimeComponent(value: "\(totalSeconds)", label: "sec")
+            ]
+            
+        case .minutes:
+            return [
+                TimeComponent(value: "\(totalMinutes)", label: "min"),
+                TimeComponent(value: String(format: "%02d", seconds), label: "sec")
+            ]
+            
+        case .hours:
+            return [
+                TimeComponent(value: "\(totalHours)", label: "hrs"),
+                TimeComponent(value: String(format: "%02d", minutes), label: "min"),
+                TimeComponent(value: String(format: "%02d", seconds), label: "sec")
+            ]
+            
+        case .days:
+            return [
+                TimeComponent(value: "\(totalDays)", label: "days"),
+                TimeComponent(value: String(format: "%02d", hours), label: "hrs"),
+                TimeComponent(value: String(format: "%02d", minutes), label: "min"),
+                TimeComponent(value: String(format: "%02d", seconds), label: "sec")
+            ]
+            
+        case .weeks:
+            return [
+                TimeComponent(value: "\(weeks)", label: "wks"),
                 TimeComponent(value: "\(days)", label: "days"),
                 TimeComponent(value: String(format: "%02d", hours), label: "hrs"),
                 TimeComponent(value: String(format: "%02d", minutes), label: "min"),
                 TimeComponent(value: String(format: "%02d", seconds), label: "sec")
             ]
-        } else {
+            
+        case .months:
             return [
-                TimeComponent(value: String(format: "%02d", hours), label: "hours"),
-                TimeComponent(value: String(format: "%02d", minutes), label: "min"),
-                TimeComponent(value: String(format: "%02d", seconds), label: "sec")
+                TimeComponent(value: "\(months)", label: "mon"),
+                TimeComponent(value: "\(calendarDays)", label: "days"),
+                TimeComponent(value: String(format: "%02d", calendarHours), label: "hrs"),
+                TimeComponent(value: String(format: "%02d", calendarMinutes), label: "min"),
+                TimeComponent(value: String(format: "%02d", calendarSeconds), label: "sec")
+            ]
+            
+        case .years:
+            return [
+                TimeComponent(value: "\(years)", label: "yrs"),
+                TimeComponent(value: "\(months)", label: "mon"),
+                TimeComponent(value: "\(calendarDays)", label: "days"),
+                TimeComponent(value: String(format: "%02d", calendarHours), label: "hrs"),
+                TimeComponent(value: String(format: "%02d", calendarMinutes), label: "min"),
+                TimeComponent(value: String(format: "%02d", calendarSeconds), label: "sec")
             ]
         }
     }
@@ -858,7 +1008,7 @@ struct TimelineBarView: View {
     private var isLarge: Bool { habit.widgetSize == .full }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: isSmall ? 8 : 12) {
+        VStack(alignment: .leading, spacing: isSmall ? 6 : 10) {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: habit.icon)
@@ -869,51 +1019,82 @@ struct TimelineBarView: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
                 Spacer()
+                Text(habit.type == .countdown ? "remaining" : "elapsed")
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.5))
+            }
+            
+            // Time display
+            Text(mainTimeDisplay)
+                .font(.system(size: isSmall ? 20 : (isLarge ? 28 : 24), weight: .bold, design: .rounded))
+                .foregroundStyle(habit.color.gradient)
+                .frame(maxWidth: .infinity, alignment: isSmall ? .center : .leading)
+            
+            // Progress info
+            HStack {
                 Text(progressText)
-                    .font(isSmall ? .caption2 : .caption)
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.7))
+                Spacer()
+                Text("\(elapsedTicks) / \(totalTicks) \(habit.timelineTickUnit.displayName.lowercased())")
+                    .font(.caption)
                     .foregroundColor(.white.opacity(0.7))
             }
             
             Spacer(minLength: 0)
             
-            // Main time display
-            Text(mainTimeDisplay)
-                .font(.system(size: isSmall ? 28 : (isLarge ? 36 : 32), weight: .bold, design: .rounded))
-                .foregroundStyle(habit.color.gradient)
-                .frame(maxWidth: .infinity, alignment: isSmall ? .center : .leading)
-            
-            Spacer(minLength: 0)
-            
-            // Progress bar - always fills from left
-            // For countdown: starts full, decreases over time
-            // For count up: starts empty, increases over time
-            ZStack(alignment: .leading) {
-                // Background
-                RoundedRectangle(cornerRadius: isSmall ? 6 : 10)
-                    .fill(.white.opacity(0.15))
+            // Timeline with ticks
+            GeometryReader { geo in
+                let tickCount = min(totalTicks, maxVisibleTicks)
+                let tickSpacing = tickCount > 1 ? geo.size.width / CGFloat(tickCount) : geo.size.width
                 
-                // Fill
-                GeometryReader { geo in
-                    RoundedRectangle(cornerRadius: isSmall ? 6 : 10)
+                ZStack(alignment: .leading) {
+                    // Background track
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(.white.opacity(0.15))
+                        .frame(height: isLarge ? 8 : 6)
+                    
+                    // Progress fill
+                    RoundedRectangle(cornerRadius: 2)
                         .fill(habit.color.gradient)
-                        .frame(width: geo.size.width * progress)
+                        .frame(width: geo.size.width * progress, height: isLarge ? 8 : 6)
                         .animation(.easeInOut(duration: 0.3), value: progress)
+                    
+                    // Tick marks
+                    ForEach(0..<tickCount + 1, id: \.self) { index in
+                        let xPosition = CGFloat(index) * tickSpacing
+                        let isFilled = isTickFilled(index: index, totalTicks: tickCount)
+                        
+                        Rectangle()
+                            .fill(isFilled ? habit.color.color : .white.opacity(0.3))
+                            .frame(width: isLarge ? 2 : 1.5, height: isLarge ? 20 : 16)
+                            .position(x: xPosition, y: (isLarge ? 20 : 16) / 2)
+                    }
                 }
+                .frame(height: isLarge ? 20 : 16)
             }
-            .frame(height: isSmall ? 16 : 24)
+            .frame(height: isLarge ? 20 : 16)
             
+            // Tick labels (only show a few key labels)
             if !isSmall {
-                // Time labels
                 HStack {
                     Text(startLabel)
                         .font(.caption2)
                         .foregroundColor(.white.opacity(0.5))
                     Spacer()
+                    if totalTicks > 2 {
+                        Text(middleLabel)
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.5))
+                        Spacer()
+                    }
                     Text(endLabel)
                         .font(.caption2)
                         .foregroundColor(.white.opacity(0.5))
                 }
             }
+            
+            Spacer(minLength: 0)
         }
         .padding(12)
         .frame(height: cardHeight)
@@ -930,7 +1111,7 @@ struct TimelineBarView: View {
         }
     }
     
-    // Match grid heights - Small/Medium same, Large is 2x
+    // Match grid heights
     private var cardHeight: CGFloat {
         switch habit.widgetSize {
         case .half: return 160
@@ -939,108 +1120,199 @@ struct TimelineBarView: View {
         }
     }
     
+    // Maximum visible ticks based on widget size
+    private var maxVisibleTicks: Int {
+        switch habit.widgetSize {
+        case .half: return 10
+        case .fullMedium: return 20
+        case .full: return 30
+        }
+    }
+    
+    // Calculate target date based on timeline settings
+    private var calculatedTargetDate: Date {
+        if let target = habit.targetDate {
+            return target
+        }
+        
+        let calendar = Calendar.current
+        let duration = habit.timelineDuration
+        
+        switch habit.timelineTickUnit {
+        case .minute:
+            return calendar.date(byAdding: .minute, value: duration, to: habit.startDate) ?? habit.startDate
+        case .hour:
+            return calendar.date(byAdding: .hour, value: duration, to: habit.startDate) ?? habit.startDate
+        case .day:
+            return calendar.date(byAdding: .day, value: duration, to: habit.startDate) ?? habit.startDate
+        case .week:
+            return calendar.date(byAdding: .weekOfYear, value: duration, to: habit.startDate) ?? habit.startDate
+        case .month:
+            return calendar.date(byAdding: .month, value: duration, to: habit.startDate) ?? habit.startDate
+        case .year:
+            return calendar.date(byAdding: .year, value: duration, to: habit.startDate) ?? habit.startDate
+        }
+    }
+    
+    // Total number of ticks (total duration in tick units)
+    private var totalTicks: Int {
+        if habit.durationType == .toTargetDate, let target = habit.targetDate {
+            return calculateTicksBetween(from: habit.startDate, to: target)
+        }
+        return habit.timelineDuration
+    }
+    
+    // Elapsed ticks
+    private var elapsedTicks: Int {
+        let ticks = calculateTicksBetween(from: habit.startDate, to: currentTime)
+        return min(max(0, ticks), totalTicks)
+    }
+    
+    private func calculateTicksBetween(from startDate: Date, to endDate: Date) -> Int {
+        let calendar = Calendar.current
+        
+        switch habit.timelineTickUnit {
+        case .minute:
+            return calendar.dateComponents([.minute], from: startDate, to: endDate).minute ?? 0
+        case .hour:
+            return calendar.dateComponents([.hour], from: startDate, to: endDate).hour ?? 0
+        case .day:
+            return calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+        case .week:
+            let days = calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+            return days / 7
+        case .month:
+            return calendar.dateComponents([.month], from: startDate, to: endDate).month ?? 0
+        case .year:
+            return calendar.dateComponents([.year], from: startDate, to: endDate).year ?? 0
+        }
+    }
+    
+    // Progress (0-1)
     private var progress: CGFloat {
-        let elapsed = habit.elapsedCells
-        let total = habit.totalDurationCells
+        guard totalTicks > 0 else { return 0 }
+        let rawProgress = CGFloat(elapsedTicks) / CGFloat(totalTicks)
+        let clampedProgress = min(max(rawProgress, 0), 1)
         
-        guard total > 0 else { return 0 }
-        
-        let rawProgress = CGFloat(min(max(Double(elapsed) / Double(total), 0), 1))
-        
-        // For countdown: start full (1.0) and decrease to empty (0.0)
-        // For count up: start empty (0.0) and increase to full (1.0)
+        // For countdown: start full, decrease over time
+        // For count up: start empty, increase over time
         if habit.type == .countdown {
-            return 1.0 - rawProgress
+            return 1.0 - clampedProgress
+        }
+        return clampedProgress
+    }
+    
+    private func isTickFilled(index: Int, totalTicks: Int) -> Bool {
+        guard totalTicks > 0 else { return false }
+        let tickProgress = CGFloat(index) / CGFloat(totalTicks)
+        
+        if habit.type == .countdown {
+            // Countdown: ticks after the remaining time are empty
+            return tickProgress >= (1.0 - progress)
         } else {
-            return rawProgress
+            // Count up: ticks before elapsed time are filled
+            return tickProgress <= progress
         }
     }
     
     private var progressText: String {
-        // For countdown show remaining %, for count up show elapsed %
         if habit.type == .countdown {
-            String(format: "%.1f%% left", progress * 100)
+            String(format: "%.1f%% remaining", progress * 100)
         } else {
-            String(format: "%.1f%%", progress * 100)
+            String(format: "%.1f%% complete", progress * 100)
         }
     }
     
     private var startLabel: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
+        formatter.dateFormat = habit.timelineTickUnit == .minute || habit.timelineTickUnit == .hour ? "MMM d, h:mm a" : "MMM d"
         return formatter.string(from: habit.startDate)
+    }
+    
+    private var middleLabel: String {
+        let midTicks = totalTicks / 2
+        return "\(midTicks) \(habit.timelineTickUnit.displayName.lowercased())"
     }
     
     private var endLabel: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        
-        if let target = habit.targetDate {
-            return formatter.string(from: target)
-        }
-        
-        // Calculate end date from duration
-        let calendar = Calendar.current
-        let endDate: Date?
-        
-        switch habit.cellUnit {
-        case .day:
-            endDate = calendar.date(byAdding: .day, value: habit.totalDurationCells, to: habit.startDate)
-        case .week:
-            endDate = calendar.date(byAdding: .weekOfYear, value: habit.totalDurationCells, to: habit.startDate)
-        case .month:
-            endDate = calendar.date(byAdding: .month, value: habit.totalDurationCells, to: habit.startDate)
-        case .year:
-            endDate = calendar.date(byAdding: .year, value: habit.totalDurationCells, to: habit.startDate)
-        }
-        
-        if let end = endDate {
-            return formatter.string(from: end)
-        }
-        
-        return "End"
+        formatter.dateFormat = habit.timelineTickUnit == .minute || habit.timelineTickUnit == .hour ? "MMM d, h:mm a" : "MMM d"
+        return formatter.string(from: calculatedTargetDate)
     }
     
     private var mainTimeDisplay: String {
-        let interval = abs(habit.type == .countdown ?
-                         (habit.targetDate ?? Date()).timeIntervalSince(currentTime) :
-                            currentTime.timeIntervalSince(habit.startDate))
+        let remaining = totalTicks - elapsedTicks
+        let displayValue = habit.type == .countdown ? remaining : elapsedTicks
         
-        let days = Int(interval / 86400)
-        let hours = Int(interval.truncatingRemainder(dividingBy: 86400) / 3600)
-        let minutes = Int(interval.truncatingRemainder(dividingBy: 3600) / 60)
-        
-        if days > 0 {
-            return "\(days)d \(hours)h \(minutes)m"
-        } else if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        } else {
-            let seconds = Int(interval.truncatingRemainder(dividingBy: 60))
-            return "\(minutes)m \(seconds)s"
+        // Show in the same unit as the tick
+        switch habit.timelineTickUnit {
+        case .minute:
+            let hrs = displayValue / 60
+            let mins = displayValue % 60
+            if hrs > 0 {
+                return "\(hrs)h \(mins)m"
+            }
+            return "\(mins)m"
+        case .hour:
+            let days = displayValue / 24
+            let hrs = displayValue % 24
+            if days > 0 {
+                return "\(days)d \(hrs)h"
+            }
+            return "\(hrs)h"
+        case .day:
+            let weeks = displayValue / 7
+            let days = displayValue % 7
+            if weeks > 0 {
+                return "\(weeks)w \(days)d"
+            }
+            return "\(days) days"
+        case .week:
+            let months = displayValue / 4
+            let weeks = displayValue % 4
+            if months > 0 {
+                return "\(months)mo \(weeks)w"
+            }
+            return "\(weeks) weeks"
+        case .month:
+            let years = displayValue / 12
+            let months = displayValue % 12
+            if years > 0 {
+                return "\(years)y \(months)mo"
+            }
+            return "\(months) months"
+        case .year:
+            return "\(displayValue) years"
         }
     }
 }
 
 // MARK: - Habit Card (Container)
+// MARK: - Habit Card (Container)
 struct HabitCard: View {
     let habit: Habit
     @ObservedObject var habitManager: HabitManager
     let onTap: () -> Void
+    var onRearrange: (() -> Void)? = nil
+    var isRearranging: Bool = false  // NEW: Add this parameter
     
     var body: some View {
-        Button(action: onTap) {
-            Group {
-                switch habit.visualStyle {
-                case .grid:
-                    ContributionGridView(habit: habit)
-                case .text:
-                    TextCounterView(habit: habit)
-                case .bar:
-                    TimelineBarView(habit: habit)
-                }
+        Group {
+            switch habit.visualStyle {
+            case .grid:
+                ContributionGridView(habit: habit)
+            case .text:
+                TextCounterView(habit: habit)
+            case .bar:
+                TimelineBarView(habit: habit)
             }
         }
-        .buttonStyle(.plain)
+        .contentShape(Rectangle())  // Make entire area tappable
+        .onTapGesture {
+            if !isRearranging {  // Only tap when not rearranging
+                onTap()
+            }
+        }
         .contextMenu {
             // Manual progress only for grid style
             if habit.updateMode == .manual && habit.visualStyle == .grid {
@@ -1051,10 +1323,13 @@ struct HabitCard: View {
                 }
             }
             
-            Button {
-                habitManager.resetProgress(for: habit)
-            } label: {
-                Label("Reset Progress", systemImage: "arrow.counterclockwise")
+            // Rearrange option
+            if let onRearrange = onRearrange {
+                Button {
+                    onRearrange()
+                } label: {
+                    Label("Rearrange", systemImage: "arrow.up.arrow.down")
+                }
             }
             
             Button(role: .destructive) {
@@ -1086,12 +1361,80 @@ struct AddHabitSheet: View {
     
     // Timeline bar settings
     @State private var barDurationType: BarDurationType = .customRange
+    @State private var timelineTickUnit: TimelineTickUnit = .day
+    @State private var timelineDuration: Int = 30
     
     // Display settings
     @State private var timeUnit: HabitTimeUnit = .days
     @State private var color: HabitColor = .blue
+    @State private var textCounterDuration: Int = 30
     
     @State private var currentPreviewPage = 0
+    
+    // Duration range for text counter based on time unit
+    private var textCounterDurationRange: ClosedRange<Int> {
+        switch timeUnit {
+        case .seconds: return 1...3600
+        case .minutes: return 1...1440
+        case .hours: return 1...720
+        case .days: return 1...365
+        case .weeks: return 1...104
+        case .months: return 1...120
+        case .years: return 1...100
+        }
+    }
+    
+    // Description of display format based on time unit
+    private var timeUnitDisplayFormatDescription: String {
+        switch timeUnit {
+        case .seconds:
+            return "Displays: seconds"
+        case .minutes:
+            return "Displays: minutes : seconds"
+        case .hours:
+            return "Displays: hours : minutes : seconds"
+        case .days:
+            return "Displays: days : hours : minutes : seconds"
+        case .weeks:
+            return "Displays: weeks : days : hours : minutes : seconds"
+        case .months:
+            return "Displays: months : days : hours : minutes : seconds"
+        case .years:
+            return "Displays: years : months : days : hours : minutes : seconds"
+        }
+    }
+    
+    // Duration range for timeline based on tick unit
+    private var timelineDurationRange: ClosedRange<Int> {
+        switch timelineTickUnit {
+        case .minute: return 1...1440    // up to 24 hours
+        case .hour: return 1...720       // up to 30 days
+        case .day: return 1...365        // up to 1 year
+        case .week: return 1...104       // up to 2 years
+        case .month: return 1...120      // up to 10 years
+        case .year: return 1...100       // up to 100 years
+        }
+    }
+    
+    // Description of timeline preview
+    private var timelinePreviewDescription: String {
+        let tickLabel = timelineTickUnit.displayName.lowercased()
+        if barDurationType == .customRange {
+            return "Timeline with \(timelineDuration) ticks, each representing 1 \(timelineTickUnit.singularName)"
+        } else {
+            return "Timeline to target date, each tick represents 1 \(timelineTickUnit.singularName)"
+        }
+    }
+    
+    // Display name for current style in preview header
+    private var currentStyleDisplayName: String {
+        let style = HabitVisualStyle.allCases[currentPreviewPage]
+        switch style {
+        case .grid: return "Grid"
+        case .text: return "Timer"
+        case .bar: return "Timeline"
+        }
+    }
     
     // Minimum target date (4 units from now)
     private var minimumTargetDate: Date {
@@ -1130,11 +1473,25 @@ struct AddHabitSheet: View {
             ScrollView {
                 VStack(spacing: 28) {
                     // Style Preview Carousel
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Style Preview")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                            .padding(.horizontal)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(currentStyleDisplayName)
+                                .font(.title2.bold())
+                                .foregroundColor(.primary)
+                            
+                            Spacer()
+                            
+                            // Swipe indicator
+                            HStack(spacing: 4) {
+                                ForEach(0..<HabitVisualStyle.allCases.count, id: \.self) { index in
+                                    Circle()
+                                        .fill(index == currentPreviewPage ? color.color : Color.secondary.opacity(0.3))
+                                        .frame(width: 6, height: 6)
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                        .animation(.easeInOut(duration: 0.2), value: currentPreviewPage)
                         
                         TabView(selection: $currentPreviewPage) {
                             ForEach(Array(HabitVisualStyle.allCases.enumerated()), id: \.element) { index, style in
@@ -1142,7 +1499,7 @@ struct AddHabitSheet: View {
                                     .tag(index)
                             }
                         }
-                        .tabViewStyle(.page(indexDisplayMode: .always))
+                        .tabViewStyle(.page(indexDisplayMode: .never))
                         .frame(height: 200)
                         .onChange(of: currentPreviewPage) { _, newValue in
                             visualStyle = HabitVisualStyle.allCases[newValue]
@@ -1313,7 +1670,7 @@ struct AddHabitSheet: View {
                                 .font(.headline)
                             
                             VStack(spacing: 16) {
-                                // Duration type (no indefinite for bar)
+                                // Duration type
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Duration Type")
                                         .font(.subheadline)
@@ -1330,14 +1687,14 @@ struct AddHabitSheet: View {
                                     }
                                 }
                                 
-                                // Time unit for bar
+                                // Tick unit - what each tick represents
                                 HStack {
-                                    Text("Time Unit")
+                                    Text("Each tick represents")
                                         .foregroundColor(.primary)
                                     Spacer()
-                                    Picker("Time Unit", selection: $cellUnit) {
-                                        ForEach(CellUnit.allCases, id: \.self) { unit in
-                                            Text(unit.pluralName.capitalized).tag(unit)
+                                    Picker("Tick Unit", selection: $timelineTickUnit) {
+                                        ForEach(TimelineTickUnit.allCases, id: \.self) { unit in
+                                            Text("1 \(unit.singularName)").tag(unit)
                                         }
                                     }
                                     .pickerStyle(.menu)
@@ -1354,9 +1711,9 @@ struct AddHabitSheet: View {
                                         Text("Duration")
                                         Spacer()
                                         Stepper(
-                                            "\(customDuration) \(cellUnit.pluralName)",
-                                            value: $customDuration,
-                                            in: customDurationRange
+                                            "\(timelineDuration) \(timelineTickUnit.displayName.lowercased())",
+                                            value: $timelineDuration,
+                                            in: timelineDurationRange
                                         )
                                     }
                                     .padding(14)
@@ -1365,14 +1722,29 @@ struct AddHabitSheet: View {
                                     
                                 case .toTargetDate:
                                     DatePicker(
-                                        "End Date",
+                                        "Target Date",
                                         selection: $targetDate,
-                                        in: minimumTargetDate...,
-                                        displayedComponents: .date
+                                        in: Date()...,
+                                        displayedComponents: timelineTickUnit == .minute || timelineTickUnit == .hour ? [.date, .hourAndMinute] : [.date]
                                     )
                                     .padding(14)
                                     .background(Color(.secondarySystemGroupedBackground))
                                     .cornerRadius(10)
+                                }
+                                
+                                // Preview info
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Timeline Preview")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Text(timelinePreviewDescription)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .padding(12)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(Color(.secondarySystemGroupedBackground))
+                                        .cornerRadius(10)
                                 }
                             }
                         }
@@ -1382,24 +1754,87 @@ struct AddHabitSheet: View {
                     // Text Counter Settings
                     if visualStyle == .text {
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("Display Settings")
+                            Text("Counter Settings")
                                 .font(.headline)
                             
-                            HStack {
-                                Text("Show Time As")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Picker("Time Unit", selection: $timeUnit) {
-                                    ForEach(HabitTimeUnit.allCases, id: \.self) { unit in
-                                        Text(unit.rawValue).tag(unit)
+                            VStack(spacing: 16) {
+                                // Duration type
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Duration Type")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Picker("Duration", selection: $barDurationType) {
+                                        ForEach(BarDurationType.allCases, id: \.self) { type in
+                                            Text(type.displayName).tag(type)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .onChange(of: barDurationType) { _, newValue in
+                                        durationType = newValue.toGridDurationType
                                     }
                                 }
-                                .pickerStyle(.menu)
-                                .tint(color.color)
+                                
+                                // Time range selection - determines display format
+                                HStack {
+                                    Text("Time Range")
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Picker("Time Unit", selection: $timeUnit) {
+                                        ForEach(HabitTimeUnit.allCases, id: \.self) { unit in
+                                            Text(unit.rawValue).tag(unit)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .tint(color.color)
+                                }
+                                .padding(14)
+                                .background(Color(.secondarySystemGroupedBackground))
+                                .cornerRadius(10)
+                                
+                                // Duration value
+                                switch barDurationType {
+                                case .customRange:
+                                    HStack {
+                                        Text("Duration")
+                                        Spacer()
+                                        Stepper(
+                                            "\(textCounterDuration) \(timeUnit.rawValue.lowercased())",
+                                            value: $textCounterDuration,
+                                            in: textCounterDurationRange
+                                        )
+                                    }
+                                    .padding(14)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                    .cornerRadius(10)
+                                    
+                                case .toTargetDate:
+                                    DatePicker(
+                                        "Target Date",
+                                        selection: $targetDate,
+                                        in: Date()...,
+                                        displayedComponents: [.date, .hourAndMinute]
+                                    )
+                                    .padding(14)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                    .cornerRadius(10)
+                                }
+                                
+                                // Display format preview
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Display Format")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Text(timeUnitDisplayFormatDescription)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .padding(12)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(Color(.secondarySystemGroupedBackground))
+                                        .cornerRadius(10)
+                                }
                             }
-                            .padding(14)
-                            .background(Color(.secondarySystemGroupedBackground))
-                            .cornerRadius(10)
                         }
                         .padding(.horizontal)
                     }
@@ -1474,9 +1909,12 @@ struct AddHabitSheet: View {
             visualStyle: style,
             widgetSize: .full,
             cellUnit: cellUnit,
-            durationType: style == .bar ? barDurationType.toGridDurationType : durationType,
+            durationType: style == .bar || style == .text ? barDurationType.toGridDurationType : durationType,
             customDuration: customDuration,
             targetDate: (durationType == .toTargetDate || barDurationType == .toTargetDate) ? targetDate : nil,
+            textCounterDuration: textCounterDuration,
+            timelineTickUnit: timelineTickUnit,
+            timelineDuration: timelineDuration,
             timeUnit: timeUnit,
             color: color
         )
@@ -1488,7 +1926,7 @@ struct AddHabitSheet: View {
     }
     
     private func addHabit() {
-        let finalDurationType = visualStyle == .bar ? barDurationType.toGridDurationType : durationType
+        let finalDurationType = (visualStyle == .bar || visualStyle == .text) ? barDurationType.toGridDurationType : durationType
         let habit = Habit(
             name: name,
             icon: icon,
@@ -1500,6 +1938,9 @@ struct AddHabitSheet: View {
             durationType: finalDurationType,
             customDuration: customDuration,
             targetDate: (finalDurationType == .toTargetDate || habitType == .countdown) ? targetDate : nil,
+            textCounterDuration: textCounterDuration,
+            timelineTickUnit: timelineTickUnit,
+            timelineDuration: timelineDuration,
             timeUnit: timeUnit,
             color: color
         )
@@ -1513,36 +1954,39 @@ struct PreviewCard: View {
     let habit: Habit
     
     var body: some View {
-        VStack {
-            ZStack {
-                // Dark background to match tracker view
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(red: 0.15, green: 0.12, blue: 0.3), Color(red: 0.2, green: 0.15, blue: 0.35)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+        ZStack {
+            // Dark background to match tracker view
+            RoundedRectangle(cornerRadius: 16)
+                .fill(
+                    LinearGradient(
+                        colors: [Color(red: 0.15, green: 0.12, blue: 0.3), Color(red: 0.2, green: 0.15, blue: 0.35)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
-                
-                Group {
-                    switch style {
-                    case .grid:
-                        ContributionGridView(habit: habit)
-                    case .text:
-                        TextCounterView(habit: habit)
-                    case .bar:
-                        TimelineBarView(habit: habit)
-                    }
-                }
-                .padding(8)
-            }
+                )
             
-            Text(style.rawValue)
-                .font(.caption.weight(.medium))
-                .foregroundColor(.secondary)
+            // Preview content - use half size widget which is 160pt tall
+            Group {
+                switch style {
+                case .grid:
+                    ContributionGridView(habit: previewHabit)
+                case .text:
+                    TextCounterView(habit: previewHabit)
+                case .bar:
+                    TimelineBarView(habit: previewHabit)
+                }
+            }
+            .padding(4)
+            .allowsHitTesting(false)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 20)
+    }
+    
+    // Create preview habit with small (half) size - fits nicely in preview
+    private var previewHabit: Habit {
+        var h = habit
+        h.widgetSize = .half
+        return h
     }
 }
 
@@ -1743,21 +2187,32 @@ struct SettingsRow: View {
     }
 }
 
+// MARK: - Drag State Manager
+class DragState: ObservableObject {
+    @Published var rearrangingHabitID: UUID? = nil
+    @Published var dragOffset: CGSize = .zero
+    @Published var dragTargetIndex: Int? = nil
+    @Published var isActivelyDragging: Bool = false
+}
+
 // MARK: - Habits Section View
 struct HabitsSection: View {
     @ObservedObject var habitManager: HabitManager
     @Binding var selectedHabit: Habit?
+    @Binding var isRearranging: Bool
+    @Binding var isActivelyDragging: Bool
     @State private var showAddHabit = false
+    @StateObject private var dragState = DragState()
     
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             // Section Header
             HStack {
                 Image(systemName: "target")
-                    .font(.subheadline)
+                    .font(.title3)
                     .foregroundColor(.green)
                 Text("Habits")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.title3.weight(.semibold))
                     .foregroundColor(.white)
                 Spacer()
                 
@@ -1765,7 +2220,7 @@ struct HabitsSection: View {
                     showAddHabit = true
                 } label: {
                     Image(systemName: "plus.circle.fill")
-                        .font(.title3)
+                        .font(.title2)
                         .foregroundColor(.white.opacity(0.7))
                 }
             }
@@ -1796,61 +2251,255 @@ struct HabitsSection: View {
                     )
                 }
             } else {
-                // Habits Layout - respecting widget sizes
-                VStack(spacing: 12) {
-                    ForEach(habitRows, id: \.0) { rowIndex, row in
-                        HStack(spacing: 12) {
-                            ForEach(row) { habit in
-                                HabitCard(habit: habit, habitManager: habitManager) {
-                                    selectedHabit = habit
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
-                            
-                            // If only one half-width in row, add spacer to keep it half
-                            if row.count == 1 && row[0].widgetSize == .half {
-                                Color.clear.frame(maxWidth: .infinity)
-                            }
-                        }
-                    }
-                }
+                // Habits list with proper layout
+                HabitListLayout(
+                    habits: habitManager.habits,
+                    habitManager: habitManager,
+                    selectedHabit: $selectedHabit,
+                    dragState: dragState
+                )
             }
         }
         .sheet(isPresented: $showAddHabit) {
             AddHabitSheet(habitManager: habitManager)
         }
+        .onChange(of: dragState.rearrangingHabitID) { _, newValue in
+            isRearranging = newValue != nil
+        }
+        .onChange(of: dragState.isActivelyDragging) { _, newValue in
+            isActivelyDragging = newValue
+        }
     }
+}
+
+
+// MARK: - Habit List Layout (handles rows and drag overlay)
+struct HabitListLayout: View {
+    let habits: [Habit]
+    @ObservedObject var habitManager: HabitManager
+    @Binding var selectedHabit: Habit?
+    @ObservedObject var dragState: DragState
     
-    // Organize habits into rows: full/medium get own row, half-width pair up
-    private var habitRows: [(Int, [Habit])] {
-        var rows: [[Habit]] = []
-        var currentHalfRow: [Habit] = []
+    // Build rows: small widgets can pair, others get own row
+    private var rows: [HabitRow] {
+        var result: [HabitRow] = []
+        var pendingSmall: Habit? = nil
         
-        for habit in habitManager.habits {
+        for habit in habits {
             if habit.widgetSize == .half {
-                // Half width - accumulate and pair
-                currentHalfRow.append(habit)
-                if currentHalfRow.count == 2 {
-                    rows.append(currentHalfRow)
-                    currentHalfRow = []
+                if let first = pendingSmall {
+                    result.append(HabitRow(habits: [first, habit]))
+                    pendingSmall = nil
+                } else {
+                    pendingSmall = habit
                 }
             } else {
-                // Full or Medium width - flush pending halfs, then own row
-                if !currentHalfRow.isEmpty {
-                    rows.append(currentHalfRow)
-                    currentHalfRow = []
+                if let small = pendingSmall {
+                    result.append(HabitRow(habits: [small]))
+                    pendingSmall = nil
                 }
-                rows.append([habit])
+                result.append(HabitRow(habits: [habit]))
             }
         }
         
-        // Don't forget remaining half-width habit
-        if !currentHalfRow.isEmpty {
-            rows.append(currentHalfRow)
+        if let small = pendingSmall {
+            result.append(HabitRow(habits: [small]))
         }
         
-        return rows.enumerated().map { ($0.offset, $0.element) }
+        return result
     }
+    
+    var body: some View {
+        ZStack {
+            // Base layout
+            VStack(spacing: 12) {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { rowIndex, row in
+                    // Drop indicator above this row
+                    if let targetIdx = dragState.dragTargetIndex {
+                        let firstHabitInRow = row.habits.first
+                        let firstIndexInRow = firstHabitInRow.flatMap { h in habits.firstIndex(where: { $0.id == h.id }) }
+                        if firstIndexInRow == targetIdx {
+                            dropIndicator
+                        }
+                    }
+                    
+                    HStack(spacing: 12) {
+                        ForEach(row.habits) { habit in
+                            let index = habits.firstIndex(where: { $0.id == habit.id }) ?? 0
+                            DraggableHabitCard(
+                                habit: habit,
+                                index: index,
+                                habitManager: habitManager,
+                                dragState: dragState,
+                                selectedHabit: $selectedHabit
+                            )
+                        }
+                    }
+                }
+                
+                // Drop indicator at the end if needed
+                if let targetIdx = dragState.dragTargetIndex, targetIdx == habits.count {
+                    dropIndicator
+                }
+            }
+            
+            // Tap to cancel overlay
+            if dragState.rearrangingHabitID != nil && !dragState.isActivelyDragging {
+                Color.black.opacity(0.001)
+                    .onTapGesture {
+                        cancelRearrange()
+                    }
+                    .allowsHitTesting(true)
+            }
+        }
+    }
+    
+    private var dropIndicator: some View {
+        HStack {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(Color.green)
+                .frame(height: 4)
+        }
+        .padding(.vertical, 4)
+        .transition(.opacity)
+    }
+    
+    private func cancelRearrange() {
+        withAnimation(.spring(response: 0.3)) {
+            dragState.rearrangingHabitID = nil
+            dragState.dragOffset = .zero
+            dragState.dragTargetIndex = nil
+            dragState.isActivelyDragging = false
+        }
+    }
+}
+
+// MARK: - Draggable Habit Card
+struct DraggableHabitCard: View {
+    let habit: Habit
+    let index: Int
+    @ObservedObject var habitManager: HabitManager
+    @ObservedObject var dragState: DragState
+    @Binding var selectedHabit: Habit?
+    
+    private var isRearrangeTarget: Bool {
+        dragState.rearrangingHabitID == habit.id
+    }
+    
+    private var isDragging: Bool {
+        isRearrangeTarget && dragState.isActivelyDragging
+    }
+    
+    var body: some View {
+        HabitCard(
+            habit: habit,
+            habitManager: habitManager,
+            onTap: {
+                if dragState.rearrangingHabitID == nil {
+                    selectedHabit = habit
+                }
+            },
+            onRearrange: {
+                startRearrange()
+            },
+            isRearranging: dragState.rearrangingHabitID != nil
+        )
+        .opacity(isDragging ? 0.9 : (isRearrangeTarget ? 0.7 : 1.0))
+        .scaleEffect(isDragging ? 1.05 : (isRearrangeTarget ? 1.02 : 1.0))
+        .offset(isDragging ? dragState.dragOffset : .zero)
+        .zIndex(isDragging ? 1000 : 0)
+        .shadow(color: isDragging ? .black.opacity(0.4) : .clear, radius: isDragging ? 20 : 0, x: 0, y: isDragging ? 10 : 0)
+        .overlay(
+            Group {
+                if isRearrangeTarget && !dragState.isActivelyDragging {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.green, lineWidth: 3)
+                        .allowsHitTesting(false)
+                }
+            }
+        )
+        // Use simultaneousGesture with BOTH long press AND drag
+        .simultaneousGesture(
+            isRearrangeTarget ?
+            LongPressGesture(minimumDuration: 0.01)
+                .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+                .onChanged { value in
+                    switch value {
+                    case .second(true, let drag):
+                        if let drag = drag {
+                            if !dragState.isActivelyDragging {
+                                dragState.isActivelyDragging = true
+                                let impact = UIImpactFeedbackGenerator(style: .medium)
+                                impact.impactOccurred()
+                                print("✅ Started dragging")
+                            }
+                            dragState.dragOffset = drag.translation
+                            print("📏 Offset: \(drag.translation)")
+                            updateTargetIndex(for: drag.translation)
+                        }
+                    default:
+                        break
+                    }
+                }
+                .onEnded { _ in
+                    print("🏁 Drag ended")
+                    finishDrag()
+                }
+            : nil
+        )
+    }
+    
+    private func startRearrange() {
+        print("🚀 Start rearrange for: \(habit.name)")
+        dragState.rearrangingHabitID = habit.id
+        dragState.dragOffset = .zero
+        dragState.dragTargetIndex = nil
+        dragState.isActivelyDragging = false
+    }
+    
+    private func updateTargetIndex(for translation: CGSize) {
+        let rowHeight: CGFloat = 172
+        let movement = Int(round(translation.height / rowHeight))
+        var newIndex = index + movement
+        
+        newIndex = max(0, min(habitManager.habits.count, newIndex))
+        
+        if newIndex != index {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                dragState.dragTargetIndex = newIndex
+            }
+        } else {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                dragState.dragTargetIndex = nil
+            }
+        }
+    }
+    
+    private func finishDrag() {
+        if let targetIndex = dragState.dragTargetIndex, targetIndex != index {
+            let adjustedTarget = targetIndex > index ? targetIndex - 1 : targetIndex
+            habitManager.moveHabit(from: index, to: adjustedTarget)
+            
+            let impact = UIImpactFeedbackGenerator(style: .medium)
+            impact.impactOccurred()
+        }
+        
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            dragState.dragOffset = .zero
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            dragState.rearrangingHabitID = nil
+            dragState.dragTargetIndex = nil
+            dragState.isActivelyDragging = false
+        }
+    }
+}
+
+// Helper struct for row grouping
+struct HabitRow: Identifiable {
+    let id = UUID()
+    let habits: [Habit]
 }
 
 // MARK: - Tracker Home Screen
@@ -1868,6 +2517,8 @@ struct TrackerView: View {
     @State private var showStatsCard = false
     @State private var showHabitsSection = false
     @State private var selectedHabit: Habit?
+    @State private var isRearrangingHabits = false
+    @State private var isActivelyDragging = false  // Only true while finger is dragging
     
     var body: some View {
         ZStack {
@@ -1951,17 +2602,24 @@ struct TrackerView: View {
                         .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: showStatsCard)
                     
                     // Habits Section
-                    HabitsSection(habitManager: habitManager, selectedHabit: $selectedHabit)
-                        .opacity(showHabitsSection ? 1 : 0)
-                        .offset(y: showHabitsSection ? 0 : 20)
-                        .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: showHabitsSection)
+                    HabitsSection(
+                        habitManager: habitManager,
+                        selectedHabit: $selectedHabit,
+                        isRearranging: $isRearrangingHabits,
+                        isActivelyDragging: $isActivelyDragging
+                    )
+                    .opacity(showHabitsSection ? 1 : 0)
+                    .offset(y: showHabitsSection ? 0 : 20)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: showHabitsSection)
                     
                     Spacer(minLength: 40)
                 }
                 .padding(.horizontal, 20)
             }
+            .scrollDisabled(isRearrangingHabits)
         }
         .gesture(
+            isRearrangingHabits ? nil :
             DragGesture(minimumDistance: 50)
                 .onEnded { value in
                     if value.translation.width < -50 && abs(value.translation.height) < 100 {
