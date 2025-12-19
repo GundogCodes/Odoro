@@ -29,16 +29,28 @@ enum HabitTimeUnit: String, Codable, CaseIterable {
 }
 
 enum HabitWidgetSize: String, Codable, CaseIterable {
-    case full = "Full Width"
-    case half = "Half Width"
+    case half = "Small"           // Square 4x4 to 7x7
+    case fullMedium = "Medium"    // Full width, same height as small
+    case full = "Large"           // Full width, taller
+    
+    var displayName: String { rawValue }
 }
 
 // What each cell in the grid represents
 enum CellUnit: String, Codable, CaseIterable {
     case day = "Day"
+    case week = "Week"
     case month = "Month"
     
     var displayName: String { rawValue }
+    
+    var pluralName: String {
+        switch self {
+        case .day: return "days"
+        case .week: return "weeks"
+        case .month: return "months"
+        }
+    }
 }
 
 // How the grid duration is defined
@@ -115,80 +127,85 @@ struct Habit: Identifiable, Codable {
         self.createdAt = Date()
     }
     
-    // Calculate total cells based on settings
-    var totalCells: Int {
-        switch durationType {
-        case .customRange:
-            return customDuration
-        case .toTargetDate:
-            guard let target = targetDate else { return customDuration }
-            let calendar = Calendar.current
-            if cellUnit == .day {
-                let days = calendar.dateComponents([.day], from: startDate, to: target).day ?? 0
-                return max(1, days)
-            } else {
-                let months = calendar.dateComponents([.month], from: startDate, to: target).month ?? 0
-                return max(1, months)
-            }
-        case .indefinite:
-            // Return max grid capacity for the widget size
-            return widgetSize == .full ? 180 : 49
+    // Maximum cells each size can display
+    var maxCellCapacity: Int {
+        switch widgetSize {
+        case .half: return 49         // 7x7
+        case .fullMedium: return 105  // 15x7
+        case .full: return 210        // 15x14
         }
     }
     
+    // Calculate total cells based on settings
+    var totalCells: Int {
+        let rawCells: Int
+        switch durationType {
+        case .customRange:
+            rawCells = customDuration
+        case .toTargetDate:
+            guard let target = targetDate else { return max(4, customDuration) }
+            let calendar = Calendar.current
+            switch cellUnit {
+            case .day:
+                rawCells = calendar.dateComponents([.day], from: startDate, to: target).day ?? 0
+            case .week:
+                let days = calendar.dateComponents([.day], from: startDate, to: target).day ?? 0
+                rawCells = Int(ceil(Double(days) / 7.0))
+            case .month:
+                rawCells = calendar.dateComponents([.month], from: startDate, to: target).month ?? 0
+            }
+        case .indefinite:
+            return maxCellCapacity
+        }
+        // Minimum 4 cells, maximum is grid capacity
+        return min(max(4, rawCells), maxCellCapacity)
+    }
+    
     // Grid dimensions based on widget size and total cells
+    // Cells will resize to fill the available space
     var gridDimensions: (columns: Int, rows: Int) {
         let total = totalCells
         
-        if widgetSize == .full {
-            // Full width constraints
-            let maxCols = 15
-            let maxRows = 12
-            
-            // For small cell counts, adapt columns to fit
-            if total <= maxCols {
-                // Single row, columns = total
-                return (total, 1)
-            }
-            
-            // Try to find a nice rectangular fit
-            // Prefer more columns for landscape look
-            for cols in stride(from: min(total, maxCols), through: 4, by: -1) {
-                let rows = Int(ceil(Double(total) / Double(cols)))
-                if rows <= maxRows {
-                    return (cols, rows)
-                }
-            }
-            // Fallback
-            return (maxCols, maxRows)
-        } else {
-            // Half width constraints
+        switch widgetSize {
+        case .half:
+            // Small: Square-ish, max 7x7
             let maxCols = 7
             let maxRows = 7
             
-            // For small cell counts, adapt
-            if total <= maxCols {
-                return (total, 1)
-            }
-            
-            // Try to make a squarish grid
-            let idealCols = Int(ceil(sqrt(Double(total))))
-            let cols = min(max(idealCols, 2), maxCols)
+            // Try to make it as square as possible
+            let side = Int(ceil(sqrt(Double(total))))
+            let cols = min(side, maxCols)
             let rows = Int(ceil(Double(total) / Double(cols)))
+            return (cols, min(rows, maxRows))
             
-            if rows <= maxRows {
-                return (cols, rows)
-            }
+        case .fullMedium:
+            // Medium: Wide rectangle, max 15x7
+            // Aim for roughly 2:1 aspect ratio (width:height)
+            let maxCols = 15
+            let maxRows = 7
             
-            // If too many rows, use more columns
-            for c in stride(from: cols, through: maxCols, by: 1) {
-                let r = Int(ceil(Double(total) / Double(c)))
-                if r <= maxRows {
-                    return (c, r)
-                }
-            }
+            // Calculate ideal dimensions for ~2:1 ratio
+            // cols ≈ 2 * rows, cols * rows ≈ total
+            // So rows ≈ sqrt(total/2), cols ≈ 2*rows
+            let idealRows = max(1, Int(ceil(sqrt(Double(total) / 2.0))))
+            let idealCols = Int(ceil(Double(total) / Double(idealRows)))
             
-            return (maxCols, maxRows)
+            let cols = min(idealCols, maxCols)
+            let rows = min(Int(ceil(Double(total) / Double(cols))), maxRows)
+            return (cols, rows)
+            
+        case .full:
+            // Large: Wide rectangle, max 15x14
+            // Aim for roughly 1:1 to 2:1 ratio
+            let maxCols = 15
+            let maxRows = 14
+            
+            let idealRows = max(1, Int(ceil(sqrt(Double(total) / 1.5))))
+            let idealCols = Int(ceil(Double(total) / Double(idealRows)))
+            
+            let cols = min(idealCols, maxCols)
+            let rows = min(Int(ceil(Double(total) / Double(cols))), maxRows)
+            return (cols, rows)
         }
     }
     
@@ -208,9 +225,13 @@ struct Habit: Identifiable, Codable {
         let calendar = Calendar.current
         let elapsed: Int
         
-        if cellUnit == .day {
+        switch cellUnit {
+        case .day:
             elapsed = calendar.dateComponents([.day], from: startDate, to: date).day ?? 0
-        } else {
+        case .week:
+            let days = calendar.dateComponents([.day], from: startDate, to: date).day ?? 0
+            elapsed = days / 7
+        case .month:
             elapsed = calendar.dateComponents([.month], from: startDate, to: date).month ?? 0
         }
         
@@ -461,54 +482,61 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 // MARK: - Progress Grid View (fills from top-left to right, like reading)
 struct ContributionGridView: View {
     let habit: Habit
-    let isCompact: Bool
     let showFullGrid: Bool  // For detail view
     
-    init(habit: Habit, isCompact: Bool, showFullGrid: Bool = false) {
+    init(habit: Habit, showFullGrid: Bool = false) {
         self.habit = habit
-        self.isCompact = isCompact
         self.showFullGrid = showFullGrid
+    }
+    
+    private var isSmall: Bool { habit.widgetSize == .half }
+    private var isLarge: Bool { habit.widgetSize == .full }
+    
+    // Fixed card heights - Small/Medium same, Large is 2x
+    private var cardHeight: CGFloat {
+        switch habit.widgetSize {
+        case .half: return 160
+        case .fullMedium: return 160
+        case .full: return 320
+        }
     }
     
     private var dimensions: (columns: Int, rows: Int) {
         habit.gridDimensions
     }
     
-    private var totalCells: Int {
-        dimensions.columns * dimensions.rows
-    }
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: habit.icon)
-                    .font(isCompact ? .caption : .subheadline)
+                    .font(isSmall ? .caption : .subheadline)
                     .foregroundColor(habit.color.color)
                 Text(habit.name)
-                    .font(isCompact ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                    .font(isSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
                     .foregroundColor(.white)
                     .lineLimit(1)
                 Spacer()
                 
                 // Progress label
                 Text(progressLabel)
-                    .font(isCompact ? .caption2 : .caption)
+                    .font(isSmall ? .caption2 : .caption)
                     .foregroundColor(.white.opacity(0.7))
             }
             
-            // Grid
+            // Grid - takes remaining space
             GridContent(
                 columns: dimensions.columns,
                 rows: dimensions.rows,
                 filledCells: filledCellsForDisplay,
                 totalCells: habit.totalCells,
                 color: habit.color.color,
-                spacing: isCompact ? 2 : 3,
+                spacing: isSmall ? 3 : 4,
                 isCountdown: habit.type == .countdown
             )
         }
         .padding(12)
+        .frame(height: cardHeight)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(.ultraThinMaterial)
@@ -535,16 +563,22 @@ struct ContributionGridView: View {
         let total = habit.totalCells
         
         if habit.durationType == .indefinite {
+            let gridCapacity = dimensions.columns * dimensions.rows
             let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
-            return "\(filled)/\(totalCells)\(cycleInfo)"
+            return "\(filled % gridCapacity)/\(gridCapacity)\(cycleInfo)"
         }
         
-        let unitSuffix = habit.cellUnit == .day ? "d" : "mo"
+        let unitSuffix: String
+        switch habit.cellUnit {
+        case .day: unitSuffix = "d"
+        case .week: unitSuffix = "w"
+        case .month: unitSuffix = "mo"
+        }
         return "\(filled)/\(total)\(unitSuffix)"
     }
 }
 
-// Separate grid content view to properly calculate dimensions
+// Separate grid content view - cells resize to fill available space
 struct GridContent: View {
     let columns: Int
     let rows: Int
@@ -556,31 +590,36 @@ struct GridContent: View {
     
     var body: some View {
         GeometryReader { geo in
-            let totalHSpacing = spacing * CGFloat(columns - 1)
-            let cellSize = (geo.size.width - totalHSpacing) / CGFloat(columns)
+            let availableWidth = geo.size.width
+            let availableHeight = geo.size.height
             
-            VStack(alignment: .leading, spacing: spacing) {
+            let totalHSpacing = spacing * CGFloat(columns - 1)
+            let totalVSpacing = spacing * CGFloat(rows - 1)
+            
+            // Calculate cell size to fill available space (cells stretch to fill)
+            let cellWidth = (availableWidth - totalHSpacing) / CGFloat(columns)
+            let cellHeight = (availableHeight - totalVSpacing) / CGFloat(rows)
+            
+            VStack(spacing: spacing) {
                 ForEach(Array(0..<rows), id: \.self) { row in
                     HStack(spacing: spacing) {
                         ForEach(Array(0..<columns), id: \.self) { col in
                             let cellIndex = (row * columns) + col
                             
-                            // Only show cells up to totalCells
                             if cellIndex < totalCells {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(isCellFilled(at: cellIndex) ? color : Color.white.opacity(0.12))
-                                    .frame(width: cellSize, height: cellSize)
+                                RoundedRectangle(cornerRadius: min(cellWidth, cellHeight) * 0.15)
+                                    .fill(isCellFilled(at: cellIndex) ? color : Color.white.opacity(0.15))
+                                    .frame(width: cellWidth, height: cellHeight)
                             } else {
-                                // Empty spacer for grid alignment
+                                // Empty placeholder for alignment
                                 Color.clear
-                                    .frame(width: cellSize, height: cellSize)
+                                    .frame(width: cellWidth, height: cellHeight)
                             }
                         }
                     }
                 }
             }
         }
-        .aspectRatio(calculateAspectRatio(), contentMode: .fit)
     }
     
     private func isCellFilled(at index: Int) -> Bool {
@@ -593,51 +632,52 @@ struct GridContent: View {
             return index < filledCells
         }
     }
-    
-    private func calculateAspectRatio() -> CGFloat {
-        let widthUnits = CGFloat(columns)
-        let heightUnits = CGFloat(rows)
-        return widthUnits / heightUnits
-    }
 }
 
 // MARK: - Text Counter View
 struct TextCounterView: View {
     let habit: Habit
-    let isCompact: Bool
     
     @State private var currentTime = Date()
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
+    private var isSmall: Bool { habit.widgetSize == .half }
+    private var isLarge: Bool { habit.widgetSize == .full }
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: isCompact ? 8 : 12) {
+        VStack(alignment: .leading, spacing: isSmall ? 8 : 12) {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: habit.icon)
-                    .font(isCompact ? .caption : .subheadline)
+                    .font(isSmall ? .caption : .subheadline)
                     .foregroundColor(habit.color.color)
                 Text(habit.name)
-                    .font(isCompact ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                    .font(isSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
                     .foregroundColor(.white)
                     .lineLimit(1)
                 Spacer()
             }
             
-            if isCompact {
-                // Compact: Single large number
-                Text(primaryValue)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(habit.color.gradient)
-                Text(primaryLabel)
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.6))
+            Spacer(minLength: 0)
+            
+            if isSmall {
+                // Small: Single large number centered
+                VStack(spacing: 4) {
+                    Text(primaryValue)
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .foregroundStyle(habit.color.gradient)
+                    Text(primaryLabel)
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.6))
+                }
+                .frame(maxWidth: .infinity)
             } else {
-                // Full: Multiple time components
-                HStack(spacing: 16) {
+                // Medium/Large: Multiple time components
+                HStack(spacing: 12) {
                     ForEach(timeComponents, id: \.label) { component in
                         VStack(spacing: 4) {
                             Text(component.value)
-                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .font(.system(size: isLarge ? 32 : 28, weight: .bold, design: .rounded))
                                 .foregroundStyle(habit.color.gradient)
                             Text(component.label)
                                 .font(.caption2)
@@ -646,25 +686,27 @@ struct TextCounterView: View {
                         .frame(maxWidth: .infinity)
                     }
                 }
-                
-                // Progress indicator for countdown
-                if habit.type == .countdown, let target = habit.targetDate {
-                    let progress = progressToTarget
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(.white.opacity(0.1))
-                            .frame(height: 6)
-                        GeometryReader { geo in
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(habit.color.gradient)
-                                .frame(width: geo.size.width * progress)
-                        }
+            }
+            
+            Spacer(minLength: 0)
+            
+            // Progress indicator
+            if habit.durationType != .indefinite {
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(.white.opacity(0.1))
                         .frame(height: 6)
+                    GeometryReader { geo in
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(habit.color.gradient)
+                            .frame(width: geo.size.width * progressToTarget)
                     }
+                    .frame(height: 6)
                 }
             }
         }
         .padding(12)
+        .frame(height: cardHeight)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(.ultraThinMaterial)
@@ -678,6 +720,15 @@ struct TextCounterView: View {
         }
     }
     
+    // Match grid heights - Small/Medium same, Large is 2x
+    private var cardHeight: CGFloat {
+        switch habit.widgetSize {
+        case .half: return 160
+        case .fullMedium: return 160
+        case .full: return 320
+        }
+    }
+    
     private var timeInterval: TimeInterval {
         if habit.type == .countdown {
             return (habit.targetDate ?? Date()).timeIntervalSince(currentTime)
@@ -687,10 +738,10 @@ struct TextCounterView: View {
     }
     
     private var progressToTarget: CGFloat {
-        guard let target = habit.targetDate else { return 0 }
-        let total = target.timeIntervalSince(habit.startDate)
-        let elapsed = currentTime.timeIntervalSince(habit.startDate)
-        return CGFloat(min(max(elapsed / total, 0), 1))
+        let filled = habit.filledCells(at: currentTime)
+        let total = habit.totalCells
+        guard total > 0 else { return 0 }
+        return CGFloat(min(max(Double(filled) / Double(total), 0), 1))
     }
     
     private var primaryValue: String {
@@ -742,56 +793,62 @@ struct TextCounterView: View {
 // MARK: - Timeline Bar View
 struct TimelineBarView: View {
     let habit: Habit
-    let isCompact: Bool
     
     @State private var currentTime = Date()
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
+    private var isSmall: Bool { habit.widgetSize == .half }
+    private var isLarge: Bool { habit.widgetSize == .full }
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: isCompact ? 8 : 12) {
+        VStack(alignment: .leading, spacing: isSmall ? 8 : 12) {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: habit.icon)
-                    .font(isCompact ? .caption : .subheadline)
+                    .font(isSmall ? .caption : .subheadline)
                     .foregroundColor(habit.color.color)
                 Text(habit.name)
-                    .font(isCompact ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                    .font(isSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
                     .foregroundColor(.white)
                     .lineLimit(1)
                 Spacer()
                 Text(progressText)
-                    .font(isCompact ? .caption2 : .caption)
+                    .font(isSmall ? .caption2 : .caption)
                     .foregroundColor(.white.opacity(0.7))
             }
+            
+            Spacer(minLength: 0)
+            
+            // Main time display
+            Text(mainTimeDisplay)
+                .font(.system(size: isSmall ? 28 : (isLarge ? 36 : 32), weight: .bold, design: .rounded))
+                .foregroundStyle(habit.color.gradient)
+                .frame(maxWidth: .infinity, alignment: isSmall ? .center : .leading)
+            
+            Spacer(minLength: 0)
             
             // Progress bar
             ZStack(alignment: habit.type == .countdown ? .trailing : .leading) {
                 // Background
-                RoundedRectangle(cornerRadius: isCompact ? 6 : 10)
+                RoundedRectangle(cornerRadius: isSmall ? 6 : 10)
                     .fill(.white.opacity(0.15))
-                    .frame(height: isCompact ? 16 : 28)
                 
                 // Fill
                 GeometryReader { geo in
-                    RoundedRectangle(cornerRadius: isCompact ? 6 : 10)
+                    RoundedRectangle(cornerRadius: isSmall ? 6 : 10)
                         .fill(habit.color.gradient)
                         .frame(width: geo.size.width * progress)
                         .animation(.easeInOut(duration: 0.3), value: progress)
                 }
-                .frame(height: isCompact ? 16 : 28)
             }
-            .frame(height: isCompact ? 16 : 28)
+            .frame(height: isSmall ? 16 : 24)
             
-            if !isCompact {
+            if !isSmall {
                 // Time labels
                 HStack {
                     Text(startLabel)
                         .font(.caption2)
                         .foregroundColor(.white.opacity(0.5))
-                    Spacer()
-                    Text(mainTimeDisplay)
-                        .font(.headline.bold())
-                        .foregroundStyle(habit.color.gradient)
                     Spacer()
                     Text(endLabel)
                         .font(.caption2)
@@ -800,6 +857,7 @@ struct TimelineBarView: View {
             }
         }
         .padding(12)
+        .frame(height: cardHeight)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(.ultraThinMaterial)
@@ -810,6 +868,15 @@ struct TimelineBarView: View {
         )
         .onReceive(timer) { _ in
             currentTime = Date()
+        }
+    }
+    
+    // Match grid heights - Small/Medium same, Large is 2x
+    private var cardHeight: CGFloat {
+        switch habit.widgetSize {
+        case .half: return 160
+        case .fullMedium: return 160
+        case .full: return 320
         }
     }
     
@@ -873,20 +940,16 @@ struct HabitCard: View {
     @ObservedObject var habitManager: HabitManager
     let onTap: () -> Void
     
-    var isCompact: Bool {
-        habit.widgetSize == .half
-    }
-    
     var body: some View {
         Button(action: onTap) {
             Group {
                 switch habit.visualStyle {
                 case .grid:
-                    ContributionGridView(habit: habit, isCompact: isCompact)
+                    ContributionGridView(habit: habit)
                 case .text:
-                    TextCounterView(habit: habit, isCompact: isCompact)
+                    TextCounterView(habit: habit)
                 case .bar:
-                    TimelineBarView(habit: habit, isCompact: isCompact)
+                    TimelineBarView(habit: habit)
                 }
             }
         }
@@ -939,13 +1002,25 @@ struct AddHabitSheet: View {
     
     @State private var currentPreviewPage = 0
     
-    // Minimum target date is current date + 4 days/months
+    // Minimum target date is current date + 4 days/weeks/months (minimum 4 cells)
     private var minimumTargetDate: Date {
         let calendar = Calendar.current
-        if cellUnit == .day {
+        switch cellUnit {
+        case .day:
             return calendar.date(byAdding: .day, value: 4, to: Date()) ?? Date()
-        } else {
+        case .week:
+            return calendar.date(byAdding: .weekOfYear, value: 4, to: Date()) ?? Date()
+        case .month:
             return calendar.date(byAdding: .month, value: 4, to: Date()) ?? Date()
+        }
+    }
+    
+    // Range limits for custom duration (minimum 4 cells)
+    private var customDurationRange: ClosedRange<Int> {
+        switch cellUnit {
+        case .day: return 4...365
+        case .week: return 4...104
+        case .month: return 4...120
         }
     }
     
@@ -1055,9 +1130,9 @@ struct AddHabitSheet: View {
                             switch durationType {
                             case .customRange:
                                 Stepper(
-                                    "\(customDuration) \(cellUnit == .day ? "days" : "months")",
+                                    "\(customDuration) \(cellUnit.pluralName)",
                                     value: $customDuration,
-                                    in: (cellUnit == .day ? 4 : 4)...(cellUnit == .day ? 365 : 120)
+                                    in: customDurationRange
                                 )
                             case .toTargetDate:
                                 DatePicker(
@@ -1206,11 +1281,11 @@ struct PreviewCard: View {
                 Group {
                     switch style {
                     case .grid:
-                        ContributionGridView(habit: habit, isCompact: false)
+                        ContributionGridView(habit: habit)
                     case .text:
-                        TextCounterView(habit: habit, isCompact: false)
+                        TextCounterView(habit: habit)
                     case .bar:
-                        TimelineBarView(habit: habit, isCompact: false)
+                        TimelineBarView(habit: habit)
                     }
                 }
                 .padding(8)
@@ -1246,7 +1321,7 @@ struct HabitDetailSheet: View {
                                     )
                                 )
                             
-                            ContributionGridView(habit: habit, isCompact: false, showFullGrid: true)
+                            ContributionGridView(habit: habit, showFullGrid: true)
                                 .padding(12)
                         }
                         .padding(.horizontal)
@@ -1496,27 +1571,26 @@ struct HabitsSection: View {
         }
     }
     
-    // Organize habits into rows: full-width gets own row, half-width pair up
+    // Organize habits into rows: full/medium get own row, half-width pair up
     private var habitRows: [(Int, [Habit])] {
         var rows: [[Habit]] = []
         var currentHalfRow: [Habit] = []
         
         for habit in habitManager.habits {
-            if habit.widgetSize == .full {
-                // Flush any pending half-width habits first
-                if !currentHalfRow.isEmpty {
-                    rows.append(currentHalfRow)
-                    currentHalfRow = []
-                }
-                // Full width gets its own row
-                rows.append([habit])
-            } else {
-                // Half width - accumulate
+            if habit.widgetSize == .half {
+                // Half width - accumulate and pair
                 currentHalfRow.append(habit)
                 if currentHalfRow.count == 2 {
                     rows.append(currentHalfRow)
                     currentHalfRow = []
                 }
+            } else {
+                // Full or Medium width - flush pending halfs, then own row
+                if !currentHalfRow.isEmpty {
+                    rows.append(currentHalfRow)
+                    currentHalfRow = []
+                }
+                rows.append([habit])
             }
         }
         
