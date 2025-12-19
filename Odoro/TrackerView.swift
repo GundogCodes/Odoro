@@ -134,6 +134,7 @@ struct Habit: Identifiable, Codable {
     // Progress tracking
     var currentValue: Int               // Current progress (cells filled for manual)
     var cycleCount: Int                 // How many times grid has cycled (for indefinite)
+    var manuallyFilledCells: Set<Int>   // Which specific cells are filled (for manual tracking)
     
     // Display settings
     var timeUnit: HabitTimeUnit         // Display unit for text counter
@@ -176,9 +177,28 @@ struct Habit: Identifiable, Codable {
         self.timelineDuration = timelineDuration
         self.currentValue = 0
         self.cycleCount = 0
+        self.manuallyFilledCells = []
         self.timeUnit = timeUnit
         self.color = color
         self.createdAt = Date()
+    }
+    
+    // Calculate current cell index based on elapsed time
+    var currentCellIndex: Int {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        switch cellUnit {
+        case .day:
+            return max(0, calendar.dateComponents([.day], from: startDate, to: now).day ?? 0)
+        case .week:
+            let days = calendar.dateComponents([.day], from: startDate, to: now).day ?? 0
+            return max(0, days / 7)
+        case .month:
+            return max(0, calendar.dateComponents([.month], from: startDate, to: now).month ?? 0)
+        case .year:
+            return max(0, calendar.dateComponents([.year], from: startDate, to: now).year ?? 0)
+        }
     }
     
     // Maximum cells each size can display
@@ -400,13 +420,32 @@ class HabitManager: ObservableObject {
     
     func incrementProgress(for habit: Habit) {
         if var h = habits.first(where: { $0.id == habit.id }) {
+            // Get the current cell index based on elapsed time
+            let cellIndex = h.currentCellIndex
             let gridCapacity = h.gridDimensions.columns * h.gridDimensions.rows
-            h.currentValue += 1
+            
+            // For indefinite habits, wrap the index within current cycle
+            let effectiveIndex = h.durationType == .indefinite ? cellIndex % gridCapacity : cellIndex
+            
+            // Toggle the cell - if already filled, unfill it; otherwise fill it
+            if h.manuallyFilledCells.contains(effectiveIndex) {
+                h.manuallyFilledCells.remove(effectiveIndex)
+            } else {
+                h.manuallyFilledCells.insert(effectiveIndex)
+            }
+            
+            // Update currentValue to match the count (for compatibility)
+            h.currentValue = h.manuallyFilledCells.count
             
             // Handle cycling for indefinite habits
-            if h.durationType == .indefinite && h.currentValue >= gridCapacity {
-                h.currentValue = 0
-                h.cycleCount += 1
+            if h.durationType == .indefinite && effectiveIndex >= gridCapacity - 1 {
+                // Check if we should cycle (all cells in range filled or time moved on)
+                let maxFilledIndex = h.manuallyFilledCells.max() ?? 0
+                if maxFilledIndex >= gridCapacity - 1 {
+                    h.manuallyFilledCells.removeAll()
+                    h.cycleCount += 1
+                    h.currentValue = 0
+                }
             }
             
             updateHabit(h)
@@ -417,6 +456,7 @@ class HabitManager: ObservableObject {
         if var h = habits.first(where: { $0.id == habit.id }) {
             h.currentValue = 0
             h.cycleCount = 0
+            h.manuallyFilledCells.removeAll()
             updateHabit(h)
         }
     }
@@ -624,7 +664,10 @@ struct ContributionGridView: View {
                 totalCells: habit.totalCells,
                 color: habit.color.color,
                 spacing: isSmall ? 3 : 4,
-                isCountdown: habit.type == .countdown
+                isCountdown: habit.type == .countdown,
+                isManualMode: habit.updateMode == .manual,
+                manuallyFilledCells: habit.manuallyFilledCells,
+                currentCellIndex: habit.currentCellIndex
             )
         }
         .padding(12)
@@ -653,7 +696,6 @@ struct ContributionGridView: View {
     private var progressLabel: String {
         let pageInfo = habit.gridPageInfo
         let totalDuration = habit.totalDurationCells
-        let elapsed = habit.elapsedCells
         
         let unitSuffix: String
         switch habit.cellUnit {
@@ -662,6 +704,19 @@ struct ContributionGridView: View {
         case .month: unitSuffix = "mo"
         case .year: unitSuffix = "y"
         }
+        
+        if habit.updateMode == .manual {
+            // For manual mode, show filled cells / total cells
+            let filledCount = habit.manuallyFilledCells.count
+            if habit.durationType == .indefinite {
+                let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
+                return "\(filledCount)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
+            }
+            return "\(filledCount)/\(totalDuration)"
+        }
+        
+        // Auto mode - show elapsed time
+        let elapsed = habit.elapsedCells
         
         if habit.durationType == .indefinite {
             let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
@@ -686,6 +741,9 @@ struct GridContent: View {
     let color: Color
     let spacing: CGFloat
     let isCountdown: Bool
+    let isManualMode: Bool
+    let manuallyFilledCells: Set<Int>
+    let currentCellIndex: Int  // Today's cell index
     
     var body: some View {
         GeometryReader { geo in
@@ -707,7 +765,7 @@ struct GridContent: View {
                             
                             if cellIndex < totalCells {
                                 RoundedRectangle(cornerRadius: min(cellWidth, cellHeight) * 0.15)
-                                    .fill(isCellFilled(at: cellIndex) ? color : Color.white.opacity(0.15))
+                                    .fill(cellColor(at: cellIndex))
                                     .frame(width: cellWidth, height: cellHeight)
                             } else {
                                 // Empty placeholder for alignment
@@ -717,6 +775,31 @@ struct GridContent: View {
                         }
                     }
                 }
+            }
+        }
+    }
+    
+    private func cellColor(at index: Int) -> Color {
+        if isManualMode {
+            // Manual mode: check if this specific cell is in the filled set
+            if manuallyFilledCells.contains(index) {
+                return color
+            } else if index == currentCellIndex {
+                // Highlight today's cell with a subtle border/tint if not filled
+                return Color.white.opacity(0.25)
+            } else if index > currentCellIndex {
+                // Future cells are dimmer
+                return Color.white.opacity(0.1)
+            } else {
+                // Past unfilled cells
+                return Color.white.opacity(0.15)
+            }
+        } else {
+            // Auto mode: use the original fill logic
+            if isCellFilled(at: index) {
+                return color
+            } else {
+                return Color.white.opacity(0.15)
             }
         }
     }
@@ -1866,7 +1949,16 @@ struct AddHabitSheet: View {
         )
         
         // Set sample progress for preview (about 1/3 filled)
-        habit.currentValue = habit.totalDurationCells / 3
+        if habit.updateMode == .manual {
+            // For manual mode, fill some specific cells
+            let cellsToFill = habit.totalDurationCells / 3
+            for i in 0..<cellsToFill {
+                habit.manuallyFilledCells.insert(i)
+            }
+            habit.currentValue = habit.manuallyFilledCells.count
+        } else {
+            habit.currentValue = habit.totalDurationCells / 3
+        }
         
         return habit
     }
@@ -1983,13 +2075,20 @@ struct HabitDetailSheet: View {
                         if habit.updateMode == .manual && habit.visualStyle == .grid {
                             SettingsSection(title: "Progress") {
                                 HStack {
-                                    Text("Current Progress")
+                                    Text("Cells Filled")
                                     Spacer()
-                                    Stepper("\(habit.currentValue)", value: $habit.currentValue, in: 0...habit.totalDurationCells)
-                                        .labelsHidden()
-                                    Text("\(habit.currentValue)")
+                                    Text("\(habit.manuallyFilledCells.count) / \(habit.totalDurationCells)")
                                         .foregroundColor(.secondary)
-                                        .frame(width: 40)
+                                }
+                                .padding(.horizontal)
+                                .padding(.vertical, 12)
+                                .background(Color(.secondarySystemGroupedBackground))
+                                
+                                HStack {
+                                    Text("Current Cell")
+                                    Spacer()
+                                    Text("\(habit.cellUnit.displayName) \(habit.currentCellIndex + 1)")
+                                        .foregroundColor(.secondary)
                                 }
                                 .padding(.horizontal)
                                 .padding(.vertical, 12)
@@ -2002,8 +2101,9 @@ struct HabitDetailSheet: View {
                                     }
                                 } label: {
                                     HStack {
-                                        Image(systemName: "plus.circle.fill")
-                                        Text("Add Progress")
+                                        let isTodayFilled = habit.manuallyFilledCells.contains(habit.currentCellIndex)
+                                        Image(systemName: isTodayFilled ? "checkmark.circle.fill" : "plus.circle.fill")
+                                        Text(isTodayFilled ? "Unmark Today" : "Mark Today Complete")
                                     }
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
@@ -2339,7 +2439,8 @@ struct HabitCardWrapper: View {
                     Button {
                         habitManager.incrementProgress(for: habit)
                     } label: {
-                        Label("Add Progress", systemImage: "plus.circle")
+                        let isFilled = habit.manuallyFilledCells.contains(habit.currentCellIndex)
+                        Label(isFilled ? "Unmark Today" : "Mark Today", systemImage: isFilled ? "xmark.circle" : "checkmark.circle")
                     }
                 }
                 
