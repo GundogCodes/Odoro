@@ -113,6 +113,18 @@ enum BarDurationType: String, Codable, CaseIterable {
     }
 }
 
+// MARK: - Habit Note
+struct HabitNote: Identifiable, Codable {
+    var id = UUID()
+    var content: String
+    var createdAt: Date
+    
+    init(content: String) {
+        self.content = content
+        self.createdAt = Date()
+    }
+}
+
 struct Habit: Identifiable, Codable {
     var id = UUID()
     var name: String
@@ -135,6 +147,11 @@ struct Habit: Identifiable, Codable {
     var currentValue: Int               // Current progress (cells filled for manual)
     var cycleCount: Int                 // How many times grid has cycled (for indefinite)
     var manuallyFilledCells: Set<Int>   // Which specific cells are filled (for manual tracking)
+    
+    // Notes & Completion
+    var notes: [HabitNote]              // User's timestamped notes/journal entries
+    var isCompleted: Bool               // Whether the habit goal is completed
+    var completedAt: Date?              // When the habit was marked complete
     
     // Display settings
     var timeUnit: HabitTimeUnit         // Display unit for text counter
@@ -178,6 +195,9 @@ struct Habit: Identifiable, Codable {
         self.currentValue = 0
         self.cycleCount = 0
         self.manuallyFilledCells = []
+        self.notes = []
+        self.isCompleted = false
+        self.completedAt = nil
         self.timeUnit = timeUnit
         self.color = color
         self.createdAt = Date()
@@ -384,6 +404,53 @@ class HabitManager: ObservableObject {
     
     private let saveKey = "savedHabits"
     
+    // Computed properties for filtering
+    var activeHabits: [Habit] {
+        habits.filter { !$0.isCompleted }
+    }
+    
+    var completedHabits: [Habit] {
+        habits.filter { $0.isCompleted }.sorted { ($0.completedAt ?? Date()) > ($1.completedAt ?? Date()) }
+    }
+    
+    // Stats for habits
+    var totalHabitsCreated: Int {
+        habits.count
+    }
+    
+    var totalHabitsCompleted: Int {
+        completedHabits.count
+    }
+    
+    var currentStreak: Int {
+        // Calculate streak based on consecutive days with at least one habit marked
+        let calendar = Calendar.current
+        var streak = 0
+        var checkDate = calendar.startOfDay(for: Date())
+        
+        while true {
+            let hasActivity = activeHabits.contains { habit in
+                if habit.updateMode == .manual {
+                    let dayIndex = calendar.dateComponents([.day], from: calendar.startOfDay(for: habit.startDate), to: checkDate).day ?? 0
+                    return habit.manuallyFilledCells.contains(dayIndex)
+                }
+                return false
+            }
+            
+            if hasActivity || streak == 0 {
+                if hasActivity { streak += 1 }
+                checkDate = calendar.date(byAdding: .day, value: -1, to: checkDate) ?? checkDate
+            } else {
+                break
+            }
+            
+            // Safety limit
+            if streak > 365 { break }
+        }
+        
+        return streak
+    }
+    
     init() {
         load()
     }
@@ -415,6 +482,22 @@ class HabitManager: ObservableObject {
         if let index = habits.firstIndex(where: { $0.id == habit.id }) {
             habits[index] = habit
             save()
+        }
+    }
+    
+    func completeHabit(_ habit: Habit) {
+        if var h = habits.first(where: { $0.id == habit.id }) {
+            h.isCompleted = true
+            h.completedAt = Date()
+            updateHabit(h)
+        }
+    }
+    
+    func uncompleteHabit(_ habit: Habit) {
+        if var h = habits.first(where: { $0.id == habit.id }) {
+            h.isCompleted = false
+            h.completedAt = nil
+            updateHabit(h)
         }
     }
     
@@ -461,6 +544,21 @@ class HabitManager: ObservableObject {
         }
     }
     
+    func addNote(to habit: Habit, content: String) {
+        if var h = habits.first(where: { $0.id == habit.id }) {
+            let note = HabitNote(content: content)
+            h.notes.insert(note, at: 0)  // Add to beginning (newest first)
+            updateHabit(h)
+        }
+    }
+    
+    func deleteNote(from habit: Habit, noteID: UUID) {
+        if var h = habits.first(where: { $0.id == habit.id }) {
+            h.notes.removeAll { $0.id == noteID }
+            updateHabit(h)
+        }
+    }
+    
     func moveHabit(from sourceIndex: Int, to destinationIndex: Int) {
         guard sourceIndex != destinationIndex,
               sourceIndex >= 0, sourceIndex < habits.count,
@@ -468,6 +566,17 @@ class HabitManager: ObservableObject {
         
         let habit = habits.remove(at: sourceIndex)
         habits.insert(habit, at: destinationIndex)
+        save()
+    }
+    
+    // Move habit by ID - handles filtered lists correctly
+    func moveHabitByID(from sourceID: UUID, to targetID: UUID) {
+        guard let fromIndex = habits.firstIndex(where: { $0.id == sourceID }),
+              let toIndex = habits.firstIndex(where: { $0.id == targetID }),
+              fromIndex != toIndex else { return }
+        
+        let habit = habits.remove(at: fromIndex)
+        habits.insert(habit, at: toIndex)
         save()
     }
 }
@@ -2028,11 +2137,177 @@ struct PreviewCard: View {
     }
 }
 
+// MARK: - Add Note Sheet
+struct AddNoteSheet: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var habitManager: HabitManager
+    let habit: Habit
+    
+    @State private var noteContent = ""
+    @FocusState private var isFocused: Bool
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                // Header info
+                HStack(spacing: 12) {
+                    Image(systemName: habit.icon)
+                        .font(.title2)
+                        .foregroundColor(habit.color.color)
+                    
+                    Text(habit.name)
+                        .font(.headline)
+                    
+                    Spacer()
+                }
+                .padding(.horizontal)
+                
+                // Note input
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("What's on your mind?")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    
+                    TextEditor(text: $noteContent)
+                        .frame(minHeight: 150)
+                        .padding(12)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .cornerRadius(12)
+                        .focused($isFocused)
+                }
+                .padding(.horizontal)
+                
+                // Timestamp preview
+                HStack {
+                    Image(systemName: "clock")
+                        .foregroundColor(.secondary)
+                    Text(Date().formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                
+                Spacer()
+            }
+            .padding(.top)
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Add Note")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        if !noteContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            habitManager.addNote(to: habit, content: noteContent.trimmingCharacters(in: .whitespacesAndNewlines))
+                        }
+                        dismiss()
+                    }
+                    .disabled(noteContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .onAppear {
+            isFocused = true
+        }
+    }
+}
+
+// MARK: - Notes List Sheet
+struct NotesListSheet: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var habitManager: HabitManager
+    let habit: Habit
+    
+    @State private var showAddNote = false
+    
+    // Get fresh habit data
+    private var currentHabit: Habit {
+        habitManager.habits.first { $0.id == habit.id } ?? habit
+    }
+    
+    var body: some View {
+        NavigationView {
+            Group {
+                if currentHabit.notes.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "note.text")
+                            .font(.system(size: 50))
+                            .foregroundColor(.secondary.opacity(0.5))
+                        
+                        Text("No Notes Yet")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                        
+                        Button {
+                            showAddNote = true
+                        } label: {
+                            Label("Add Your First Note", systemImage: "plus.circle.fill")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemGroupedBackground))
+                } else {
+                    List {
+                        ForEach(currentHabit.notes) { note in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(note.content)
+                                    .font(.body)
+                                
+                                HStack {
+                                    Image(systemName: "clock")
+                                        .font(.caption2)
+                                    Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.caption)
+                                }
+                                .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .onDelete { indexSet in
+                            for index in indexSet {
+                                let note = currentHabit.notes[index]
+                                habitManager.deleteNote(from: habit, noteID: note.id)
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("Notes (\(currentHabit.notes.count))")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showAddNote = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+            }
+            .sheet(isPresented: $showAddNote) {
+                AddNoteSheet(habitManager: habitManager, habit: currentHabit)
+            }
+        }
+    }
+}
+
 // MARK: - Habit Detail/Edit Sheet
 struct HabitDetailSheet: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var habitManager: HabitManager
     @State var habit: Habit
+    @State private var showAddNote = false
+    @State private var showNotesList = false
     
     var body: some View {
         NavigationView {
@@ -2143,8 +2418,86 @@ struct HabitDetailSheet: View {
                             .background(Color(.secondarySystemGroupedBackground))
                         }
                         
+                        // Notes Section
+                        SettingsSection(title: "Notes & Journey (\(habit.notes.count))") {
+                            // Add note button
+                            Button {
+                                showAddNote = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "plus.circle.fill")
+                                        .foregroundColor(.blue)
+                                    Text("Add Note")
+                                    Spacer()
+                                }
+                                .padding(.horizontal)
+                                .padding(.vertical, 12)
+                            }
+                            .background(Color(.secondarySystemGroupedBackground))
+                            
+                            // Recent notes preview (show last 3)
+                            if !habit.notes.isEmpty {
+                                ForEach(habit.notes.prefix(3)) { note in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(note.content)
+                                            .font(.subheadline)
+                                            .lineLimit(2)
+                                        
+                                        Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal)
+                                    .padding(.vertical, 10)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                }
+                                
+                                // View all button if more than 3 notes
+                                if habit.notes.count > 3 {
+                                    Button {
+                                        showNotesList = true
+                                    } label: {
+                                        HStack {
+                                            Text("View All Notes")
+                                            Spacer()
+                                            Text("\(habit.notes.count)")
+                                                .foregroundColor(.secondary)
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                    }
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                }
+                            }
+                        }
+                        
                         // Actions Section
                         SettingsSection(title: "Actions") {
+                            // Mark as Complete / Uncomplete button
+                            Button {
+                                if habit.isCompleted {
+                                    habitManager.uncompleteHabit(habit)
+                                } else {
+                                    habitManager.completeHabit(habit)
+                                }
+                                if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
+                                    habit = updated
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: habit.isCompleted ? "arrow.uturn.backward.circle" : "checkmark.seal.fill")
+                                    Text(habit.isCompleted ? "Mark as Active" : "Mark Goal Complete")
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .foregroundColor(habit.isCompleted ? .orange : .green)
+                            }
+                            .background(Color(.secondarySystemGroupedBackground))
+                            
                             Button {
                                 habitManager.resetProgress(for: habit)
                                 if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
@@ -2186,6 +2539,28 @@ struct HabitDetailSheet: View {
                     Button("Done") {
                         habitManager.updateHabit(habit)
                         dismiss()
+                    }
+                }
+            }
+            .sheet(isPresented: $showAddNote) {
+                AddNoteSheet(habitManager: habitManager, habit: habit)
+            }
+            .sheet(isPresented: $showNotesList) {
+                NotesListSheet(habitManager: habitManager, habit: habit)
+            }
+            .onChange(of: showAddNote) { _, newValue in
+                if !newValue {
+                    // Refresh habit data after adding note
+                    if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
+                        habit = updated
+                    }
+                }
+            }
+            .onChange(of: showNotesList) { _, newValue in
+                if !newValue {
+                    // Refresh habit data after viewing/deleting notes
+                    if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
+                        habit = updated
                     }
                 }
             }
@@ -2260,7 +2635,7 @@ struct HabitsSection: View {
                 }
             }
             
-            if habitManager.habits.isEmpty {
+            if habitManager.activeHabits.isEmpty {
                 // Empty state
                 Button {
                     showAddHabit = true
@@ -2303,10 +2678,9 @@ struct HabitsSection: View {
 struct ReorderableHabitList: View {
     @ObservedObject var habitManager: HabitManager
     @Binding var selectedHabit: Habit?
-    @State private var draggingHabitID: UUID? = nil
     
     var body: some View {
-        let rows = buildRows(from: habitManager.habits)
+        let rows = buildRows(from: habitManager.activeHabits)
         
         VStack(spacing: 12) {
             ForEach(rows, id: \.id) { row in
@@ -2315,8 +2689,7 @@ struct ReorderableHabitList: View {
                         HabitCardWrapper(
                             habit: habit,
                             habitManager: habitManager,
-                            selectedHabit: $selectedHabit,
-                            draggingHabitID: $draggingHabitID
+                            selectedHabit: $selectedHabit
                         )
                     }
                     
@@ -2337,9 +2710,10 @@ struct ReorderableHabitList: View {
                                         withAnimation(.easeInOut(duration: 0.2)) {
                                             habitManager.moveHabit(from: fromIndex, to: min(toIndex, habitManager.habits.count))
                                         }
+                                        let impact = UIImpactFeedbackGenerator(style: .light)
+                                        impact.impactOccurred()
                                     }
                                 }
-                                draggingHabitID = nil
                                 return true
                             } isTargeted: { _ in }
                     }
@@ -2392,63 +2766,87 @@ struct HabitCardWrapper: View {
     let habit: Habit
     @ObservedObject var habitManager: HabitManager
     @Binding var selectedHabit: Habit?
-    @Binding var draggingHabitID: UUID?
     
     @State private var isTargeted = false
+    @State private var showAddNote = false
+    @State private var showNotesList = false
+    
+    // Pre-compute this to avoid context menu delay
+    private var isTodayFilled: Bool {
+        habit.manuallyFilledCells.contains(habit.currentCellIndex)
+    }
+    
+    private var notesCount: Int {
+        habit.notes.count
+    }
     
     var body: some View {
         HabitCardContent(habit: habit)
-            .frame(maxWidth: .infinity)  // All cards expand to fill available space
-            .opacity(draggingHabitID == habit.id ? 0.3 : 1.0)
+            .frame(maxWidth: .infinity)
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(Color.green, lineWidth: 3)
-                    .opacity(isTargeted && draggingHabitID != habit.id ? 1 : 0)
+                    .opacity(isTargeted ? 1 : 0)
             )
             .contentShape(Rectangle())
             .onTapGesture {
-                if draggingHabitID == nil {
-                    selectedHabit = habit
-                }
+                selectedHabit = habit
             }
             .draggable(habit.id.uuidString) {
                 // Drag preview
                 HabitCardContent(habit: habit)
                     .frame(width: 120, height: 80)
-                    .opacity(0.9)
-                    .onAppear {
-                        draggingHabitID = habit.id
-                        let impact = UIImpactFeedbackGenerator(style: .medium)
-                        impact.impactOccurred()
-                    }
+                    .opacity(0.8)
             }
             .dropDestination(for: String.self) { items, location in
-                // Drop completed
                 if let droppedIDString = items.first,
                    let droppedID = UUID(uuidString: droppedIDString),
                    droppedID != habit.id {
                     performMove(from: droppedID, to: habit.id)
                 }
-                draggingHabitID = nil
                 return true
             } isTargeted: { targeted in
                 isTargeted = targeted
             }
             .contextMenu {
+                // Mark today (only for manual grid habits)
                 if habit.updateMode == .manual && habit.visualStyle == .grid {
                     Button {
                         habitManager.incrementProgress(for: habit)
                     } label: {
-                        let isFilled = habit.manuallyFilledCells.contains(habit.currentCellIndex)
-                        Label(isFilled ? "Unmark Today" : "Mark Today", systemImage: isFilled ? "xmark.circle" : "checkmark.circle")
+                        Label(isTodayFilled ? "Unmark Today" : "Mark Today", systemImage: isTodayFilled ? "xmark.circle" : "checkmark.circle")
                     }
                 }
+                
+                // Add Note - available for all habits
+                Button {
+                    showAddNote = true
+                } label: {
+                    Label("Add Note", systemImage: "square.and.pencil")
+                }
+                
+                // View Notes - only if there are notes
+                if notesCount > 0 {
+                    Button {
+                        showNotesList = true
+                    } label: {
+                        Label("View Notes (\(notesCount))", systemImage: "note.text")
+                    }
+                }
+                
+                Divider()
                 
                 Button(role: .destructive) {
                     habitManager.deleteHabit(habit)
                 } label: {
                     Label("Delete Habit", systemImage: "trash")
                 }
+            }
+            .sheet(isPresented: $showAddNote) {
+                AddNoteSheet(habitManager: habitManager, habit: habit)
+            }
+            .sheet(isPresented: $showNotesList) {
+                NotesListSheet(habitManager: habitManager, habit: habit)
             }
     }
     
@@ -2501,6 +2899,7 @@ struct TrackerView: View {
     @State private var showStatsCard = false
     @State private var showHabitsSection = false
     @State private var selectedHabit: Habit?
+    @State private var showCompletedGoals = false
     
     var body: some View {
         ZStack {
@@ -2521,6 +2920,9 @@ struct TrackerView: View {
                                         .stroke(Color.white, lineWidth: 2)
                                 )
                                 .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 2)
+                                .onTapGesture {
+                                    showCompletedGoals = true
+                                }
                         } else {
                             Image("logo5")
                                 .resizable()
@@ -2532,6 +2934,9 @@ struct TrackerView: View {
                                         .stroke(Color.white, lineWidth: 2)
                                 )
                                 .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 2)
+                                .onTapGesture {
+                                    showCompletedGoals = true
+                                }
                         }
                         
                         Text("Tracker")
@@ -2578,7 +2983,7 @@ struct TrackerView: View {
                     .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: showLockInButton)
                     
                     // Stats Card
-                    StatsCard(stats: stats)
+                    StatsCard(stats: stats, habitManager: habitManager)
                         .opacity(showStatsCard ? 1 : 0)
                         .offset(y: showStatsCard ? 0 : 20)
                         .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: showStatsCard)
@@ -2610,6 +3015,9 @@ struct TrackerView: View {
         .sheet(item: $selectedHabit) { habit in
             HabitDetailSheet(habitManager: habitManager, habit: habit)
         }
+        .fullScreenCover(isPresented: $showCompletedGoals) {
+            CompletedGoalsView(habitManager: habitManager, isPresented: $showCompletedGoals)
+        }
         .onAppear {
             orientationManager.lockToPortrait()
             
@@ -2629,21 +3037,22 @@ struct TrackerView: View {
 // MARK: - Stats Card
 struct StatsCard: View {
     @ObservedObject var stats: StatsManager
+    @ObservedObject var habitManager: HabitManager
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Image(systemName: "chart.bar.fill")
-                    .font(.subheadline)
-                    .foregroundColor(.orange)
-                Text("Your Stats")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(.white)
-                Spacer()
-            }
-            
-            // Stats grid - 2 rows of 3
-            VStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
+            // Lock In Stats Section
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Image(systemName: "flame.fill")
+                        .font(.subheadline)
+                        .foregroundColor(.orange)
+                    Text("Lock In Stats")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.white)
+                    Spacer()
+                }
+                
                 HStack(spacing: 12) {
                     StatItem(icon: "sun.max.fill", value: stats.todayFormatted, label: "Today", color: .orange)
                     StatItem(icon: "calendar", value: stats.weekFormatted, label: "This Week", color: .blue)
@@ -2654,6 +3063,28 @@ struct StatsCard: View {
                     StatItem(icon: "checkmark.circle.fill", value: "\(stats.sessionsCompleted)", label: "Sessions", color: .green)
                     StatItem(icon: "flame.fill", value: "\(stats.currentStreak)", label: "Day Streak", color: .red)
                     StatItem(icon: "chart.line.uptrend.xyaxis", value: stats.weeklyAverageFormatted, label: "Daily Avg", color: .purple)
+                }
+            }
+            
+            Divider()
+                .background(Color.white.opacity(0.2))
+            
+            // Habits Stats Section
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Image(systemName: "target")
+                        .font(.subheadline)
+                        .foregroundColor(.green)
+                    Text("Habits Stats")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.white)
+                    Spacer()
+                }
+                
+                HStack(spacing: 12) {
+                    StatItem(icon: "plus.circle.fill", value: "\(habitManager.totalHabitsCreated)", label: "Created", color: .blue)
+                    StatItem(icon: "checkmark.seal.fill", value: "\(habitManager.totalHabitsCompleted)", label: "Completed", color: .green)
+                    StatItem(icon: "arrow.clockwise", value: "\(habitManager.activeHabits.count)", label: "Active", color: .teal)
                 }
             }
         }
@@ -2692,6 +3123,302 @@ struct StatItem: View {
                 .foregroundColor(.white.opacity(0.7))
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Completed Goals View
+struct CompletedGoalsView: View {
+    @ObservedObject var habitManager: HabitManager
+    @Binding var isPresented: Bool
+    @State private var selectedCompletedHabit: Habit?
+    @State private var showContent = false
+    
+    var body: some View {
+        ZStack {
+            // Same background as TrackerView
+            TrackerBackground()
+            
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            showContent = false
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            isPresented = false
+                        }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    
+                    Spacer()
+                    
+                    Text("Completed Goals")
+                        .font(.title2.weight(.bold))
+                        .foregroundColor(.white)
+                    
+                    Spacer()
+                    
+                    // Invisible spacer for balance
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.clear)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 60)
+                .padding(.bottom, 20)
+                
+                if habitManager.completedHabits.isEmpty {
+                    // Empty state
+                    Spacer()
+                    VStack(spacing: 16) {
+                        Image(systemName: "trophy")
+                            .font(.system(size: 60))
+                            .foregroundColor(.yellow.opacity(0.5))
+                        
+                        Text("No Completed Goals Yet")
+                            .font(.title3.weight(.semibold))
+                            .foregroundColor(.white)
+                        
+                        Text("Complete your habits to see them here!")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.6))
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding()
+                    .opacity(showContent ? 1 : 0)
+                    .offset(y: showContent ? 0 : 20)
+                    Spacer()
+                } else {
+                    // Completed habits list
+                    ScrollView(showsIndicators: false) {
+                        LazyVStack(spacing: 12) {
+                            ForEach(habitManager.completedHabits) { habit in
+                                CompletedHabitCard(habit: habit)
+                                    .onTapGesture {
+                                        selectedCompletedHabit = habit
+                                    }
+                                    .opacity(showContent ? 1 : 0)
+                                    .offset(y: showContent ? 0 : 20)
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 40)
+                    }
+                }
+            }
+        }
+        .sheet(item: $selectedCompletedHabit) { habit in
+            CompletedHabitDetailSheet(habitManager: habitManager, habit: habit)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    showContent = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Completed Habit Card
+struct CompletedHabitCard: View {
+    let habit: Habit
+    
+    var body: some View {
+        HStack(spacing: 14) {
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(habit.color.color.opacity(0.2))
+                    .frame(width: 50, height: 50)
+                
+                Image(systemName: habit.icon)
+                    .font(.title3)
+                    .foregroundColor(habit.color.color)
+            }
+            
+            // Info
+            VStack(alignment: .leading, spacing: 4) {
+                Text(habit.name)
+                    .font(.headline)
+                    .foregroundColor(.white)
+                
+                HStack(spacing: 8) {
+                    if let completedAt = habit.completedAt {
+                        Label(completedAt.formatted(date: .abbreviated, time: .omitted), systemImage: "checkmark.seal.fill")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
+                    
+                    Text("•")
+                        .foregroundColor(.white.opacity(0.3))
+                    
+                    Text("\(habit.totalDurationCells) \(habit.cellUnit.pluralName)")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.6))
+                }
+            }
+            
+            Spacer()
+            
+            // Chevron
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.4))
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(.white.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+}
+
+// MARK: - Completed Habit Detail Sheet
+struct CompletedHabitDetailSheet: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var habitManager: HabitManager
+    @State var habit: Habit
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Completion Badge
+                    VStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(habit.color.color.opacity(0.2))
+                                .frame(width: 80, height: 80)
+                            
+                            Image(systemName: "trophy.fill")
+                                .font(.system(size: 36))
+                                .foregroundColor(.yellow)
+                        }
+                        
+                        Text("Goal Completed!")
+                            .font(.title2.weight(.bold))
+                        
+                        if let completedAt = habit.completedAt {
+                            Text("Completed on \(completedAt.formatted(date: .long, time: .omitted))")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 20)
+                    
+                    // Grid Preview (for grid style habits)
+                    if habit.visualStyle == .grid {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color(red: 0.15, green: 0.12, blue: 0.3), Color(red: 0.2, green: 0.15, blue: 0.35)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            
+                            ContributionGridView(habit: habit, showFullGrid: true)
+                                .padding(12)
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    // Stats
+                    VStack(spacing: 0) {
+                        SettingsSection(title: "Journey Stats") {
+                            SettingsRow(label: "Started", value: habit.startDate.formatted(date: .abbreviated, time: .omitted))
+                            if let completedAt = habit.completedAt {
+                                SettingsRow(label: "Completed", value: completedAt.formatted(date: .abbreviated, time: .omitted))
+                                
+                                let days = Calendar.current.dateComponents([.day], from: habit.startDate, to: completedAt).day ?? 0
+                                SettingsRow(label: "Duration", value: "\(days) days")
+                            }
+                            SettingsRow(label: "Goal", value: "\(habit.totalDurationCells) \(habit.cellUnit.pluralName)")
+                        }
+                        
+                        // Notes Section
+                        SettingsSection(title: "My Notes & Journey (\(habit.notes.count))") {
+                            if habit.notes.isEmpty {
+                                Text("No notes recorded for this goal.")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal)
+                                    .padding(.vertical, 12)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                            } else {
+                                ForEach(habit.notes) { note in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(note.content)
+                                            .font(.body)
+                                            .foregroundColor(.primary)
+                                        
+                                        Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal)
+                                    .padding(.vertical, 10)
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                }
+                            }
+                        }
+                        
+                        // Actions
+                        SettingsSection(title: "Actions") {
+                            Button {
+                                habitManager.uncompleteHabit(habit)
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "arrow.uturn.backward.circle")
+                                    Text("Restore to Active")
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .foregroundColor(.orange)
+                            }
+                            .background(Color(.secondarySystemGroupedBackground))
+                            
+                            Button(role: .destructive) {
+                                habitManager.deleteHabit(habit)
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "trash")
+                                    Text("Delete Permanently")
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                            }
+                            .background(Color(.secondarySystemGroupedBackground))
+                        }
+                    }
+                }
+                .padding(.vertical)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle(habit.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 
