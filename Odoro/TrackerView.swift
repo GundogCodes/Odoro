@@ -136,29 +136,78 @@ struct Habit: Identifiable, Codable {
         }
     }
     
-    // Calculate total cells based on settings
-    var totalCells: Int {
-        let rawCells: Int
+    // Total duration in cell units (actual full duration, not capped)
+    var totalDurationCells: Int {
         switch durationType {
         case .customRange:
-            rawCells = customDuration
+            return max(4, customDuration)
         case .toTargetDate:
             guard let target = targetDate else { return max(4, customDuration) }
             let calendar = Calendar.current
             switch cellUnit {
             case .day:
-                rawCells = calendar.dateComponents([.day], from: startDate, to: target).day ?? 0
+                return max(4, calendar.dateComponents([.day], from: startDate, to: target).day ?? 0)
             case .week:
                 let days = calendar.dateComponents([.day], from: startDate, to: target).day ?? 0
-                rawCells = Int(ceil(Double(days) / 7.0))
+                return max(4, Int(ceil(Double(days) / 7.0)))
             case .month:
-                rawCells = calendar.dateComponents([.month], from: startDate, to: target).month ?? 0
+                return max(4, calendar.dateComponents([.month], from: startDate, to: target).month ?? 0)
             }
         case .indefinite:
             return maxCellCapacity
         }
-        // Minimum 4 cells, maximum is grid capacity
-        return min(max(4, rawCells), maxCellCapacity)
+    }
+    
+    // Calculate which "page" of the grid we're on and cells for that page
+    var gridPageInfo: (currentPage: Int, totalPages: Int, cellsInCurrentPage: Int, filledInCurrentPage: Int) {
+        let totalDuration = totalDurationCells
+        let capacity = maxCellCapacity
+        let elapsed = elapsedCells
+        
+        if totalDuration <= capacity {
+            // Fits in one grid
+            return (0, 1, totalDuration, min(elapsed, totalDuration))
+        }
+        
+        // Multiple pages needed
+        let totalPages = Int(ceil(Double(totalDuration) / Double(capacity)))
+        let currentPage = min(elapsed / capacity, totalPages - 1)
+        
+        // Cells in current page
+        let cellsBeforeThisPage = currentPage * capacity
+        let remainingCells = totalDuration - cellsBeforeThisPage
+        let cellsInCurrentPage = min(remainingCells, capacity)
+        
+        // Filled cells in current page
+        let elapsedInCurrentPage = elapsed - cellsBeforeThisPage
+        let filledInCurrentPage = max(0, min(elapsedInCurrentPage, cellsInCurrentPage))
+        
+        return (currentPage, totalPages, cellsInCurrentPage, filledInCurrentPage)
+    }
+    
+    // Elapsed cells (time passed)
+    var elapsedCells: Int {
+        if updateMode == .manual {
+            return currentValue
+        }
+        
+        let calendar = Calendar.current
+        let now = Date()
+        
+        switch cellUnit {
+        case .day:
+            return max(0, calendar.dateComponents([.day], from: startDate, to: now).day ?? 0)
+        case .week:
+            let days = calendar.dateComponents([.day], from: startDate, to: now).day ?? 0
+            return max(0, days / 7)
+        case .month:
+            return max(0, calendar.dateComponents([.month], from: startDate, to: now).month ?? 0)
+        }
+    }
+    
+    // Calculate total cells based on settings (for current grid page)
+    var totalCells: Int {
+        return gridPageInfo.cellsInCurrentPage
     }
     
     // Grid dimensions based on widget size and total cells
@@ -215,34 +264,9 @@ struct Habit: Identifiable, Codable {
         return min(totalCells, dims.columns * dims.rows)
     }
     
-    // Current filled cells
+    // Current filled cells for display
     func filledCells(at date: Date = Date()) -> Int {
-        if updateMode == .manual {
-            return currentValue
-        }
-        
-        // Auto mode: calculate based on elapsed time
-        let calendar = Calendar.current
-        let elapsed: Int
-        
-        switch cellUnit {
-        case .day:
-            elapsed = calendar.dateComponents([.day], from: startDate, to: date).day ?? 0
-        case .week:
-            let days = calendar.dateComponents([.day], from: startDate, to: date).day ?? 0
-            elapsed = days / 7
-        case .month:
-            elapsed = calendar.dateComponents([.month], from: startDate, to: date).month ?? 0
-        }
-        
-        let gridCapacity = gridDimensions.columns * gridDimensions.rows
-        
-        if durationType == .indefinite {
-            // Cycle: return position within current cycle
-            return elapsed % gridCapacity
-        } else {
-            return min(max(0, elapsed), totalCells)
-        }
+        return gridPageInfo.filledInCurrentPage
     }
 }
 
@@ -559,14 +583,9 @@ struct ContributionGridView: View {
     }
     
     private var progressLabel: String {
-        let filled = habit.filledCells()
-        let total = habit.totalCells
-        
-        if habit.durationType == .indefinite {
-            let gridCapacity = dimensions.columns * dimensions.rows
-            let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
-            return "\(filled % gridCapacity)/\(gridCapacity)\(cycleInfo)"
-        }
+        let pageInfo = habit.gridPageInfo
+        let totalDuration = habit.totalDurationCells
+        let elapsed = habit.elapsedCells
         
         let unitSuffix: String
         switch habit.cellUnit {
@@ -574,7 +593,18 @@ struct ContributionGridView: View {
         case .week: unitSuffix = "w"
         case .month: unitSuffix = "mo"
         }
-        return "\(filled)/\(total)\(unitSuffix)"
+        
+        if habit.durationType == .indefinite {
+            let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
+            return "\(pageInfo.filledInCurrentPage)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
+        }
+        
+        // Show overall progress + page if multiple pages
+        if pageInfo.totalPages > 1 {
+            return "\(elapsed)/\(totalDuration)\(unitSuffix) (\(pageInfo.currentPage + 1)/\(pageInfo.totalPages))"
+        }
+        
+        return "\(elapsed)/\(totalDuration)\(unitSuffix)"
     }
 }
 
@@ -955,7 +985,8 @@ struct HabitCard: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            if habit.updateMode == .manual {
+            // Manual progress only for grid style
+            if habit.updateMode == .manual && habit.visualStyle == .grid {
                 Button {
                     habitManager.incrementProgress(for: habit)
                 } label: {
@@ -1092,12 +1123,21 @@ struct AddHabitSheet: View {
                         }
                         .pickerStyle(.segmented)
                         
-                        Picker("Update Mode", selection: $updateMode) {
-                            ForEach(HabitUpdateMode.allCases, id: \.self) { mode in
-                                Text(mode.rawValue).tag(mode)
+                        // Manual mode only available for grid style
+                        if visualStyle == .grid {
+                            Picker("Update Mode", selection: $updateMode) {
+                                ForEach(HabitUpdateMode.allCases, id: \.self) { mode in
+                                    Text(mode.rawValue).tag(mode)
+                                }
                             }
+                            .pickerStyle(.segmented)
                         }
-                        .pickerStyle(.segmented)
+                    }
+                    .onChange(of: visualStyle) { _, newStyle in
+                        // Force auto mode for non-grid styles
+                        if newStyle != .grid {
+                            updateMode = .auto
+                        }
                     }
                     
                     // Grid Settings (for grid visual style)
@@ -1335,17 +1375,20 @@ struct HabitDetailSheet: View {
                             SettingsRow(label: "Type", value: habit.type.rawValue)
                             SettingsRow(label: "Started", value: habit.startDate.formatted(date: .abbreviated, time: .omitted))
                             SettingsRow(label: "Cell Unit", value: "1 \(habit.cellUnit.displayName)")
-                            SettingsRow(label: "Total Cells", value: "\(habit.totalCells)")
-                            SettingsRow(label: "Grid Size", value: "\(habit.gridDimensions.columns) × \(habit.gridDimensions.rows)")
+                            SettingsRow(label: "Total Duration", value: "\(habit.totalDurationCells) \(habit.cellUnit.pluralName)")
+                            SettingsRow(label: "Current Grid", value: "\(habit.gridDimensions.columns) × \(habit.gridDimensions.rows)")
+                            if habit.gridPageInfo.totalPages > 1 {
+                                SettingsRow(label: "Grid Page", value: "\(habit.gridPageInfo.currentPage + 1) of \(habit.gridPageInfo.totalPages)")
+                            }
                         }
                         
-                        // Progress Section
-                        if habit.updateMode == .manual {
+                        // Progress Section (only for manual grid habits)
+                        if habit.updateMode == .manual && habit.visualStyle == .grid {
                             SettingsSection(title: "Progress") {
                                 HStack {
                                     Text("Current Progress")
                                     Spacer()
-                                    Stepper("\(habit.currentValue)", value: $habit.currentValue, in: 0...habit.totalCells)
+                                    Stepper("\(habit.currentValue)", value: $habit.currentValue, in: 0...habit.totalDurationCells)
                                         .labelsHidden()
                                     Text("\(habit.currentValue)")
                                         .foregroundColor(.secondary)
