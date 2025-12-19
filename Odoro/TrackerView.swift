@@ -1287,60 +1287,6 @@ struct TimelineBarView: View {
     }
 }
 
-// MARK: - Habit Card (Container)
-// MARK: - Habit Card (Container)
-struct HabitCard: View {
-    let habit: Habit
-    @ObservedObject var habitManager: HabitManager
-    let onTap: () -> Void
-    var onRearrange: (() -> Void)? = nil
-    var isRearranging: Bool = false  // NEW: Add this parameter
-    
-    var body: some View {
-        Group {
-            switch habit.visualStyle {
-            case .grid:
-                ContributionGridView(habit: habit)
-            case .text:
-                TextCounterView(habit: habit)
-            case .bar:
-                TimelineBarView(habit: habit)
-            }
-        }
-        .contentShape(Rectangle())  // Make entire area tappable
-        .onTapGesture {
-            if !isRearranging {  // Only tap when not rearranging
-                onTap()
-            }
-        }
-        .contextMenu {
-            // Manual progress only for grid style
-            if habit.updateMode == .manual && habit.visualStyle == .grid {
-                Button {
-                    habitManager.incrementProgress(for: habit)
-                } label: {
-                    Label("Add Progress", systemImage: "plus.circle")
-                }
-            }
-            
-            // Rearrange option
-            if let onRearrange = onRearrange {
-                Button {
-                    onRearrange()
-                } label: {
-                    Label("Rearrange", systemImage: "arrow.up.arrow.down")
-                }
-            }
-            
-            Button(role: .destructive) {
-                habitManager.deleteHabit(habit)
-            } label: {
-                Label("Delete Habit", systemImage: "trash")
-            }
-        }
-    }
-}
-
 // MARK: - Add Habit Sheet
 struct AddHabitSheet: View {
     @Environment(\.dismiss) var dismiss
@@ -2187,22 +2133,11 @@ struct SettingsRow: View {
     }
 }
 
-// MARK: - Drag State Manager
-class DragState: ObservableObject {
-    @Published var rearrangingHabitID: UUID? = nil
-    @Published var dragOffset: CGSize = .zero
-    @Published var dragTargetIndex: Int? = nil
-    @Published var isActivelyDragging: Bool = false
-}
-
 // MARK: - Habits Section View
 struct HabitsSection: View {
     @ObservedObject var habitManager: HabitManager
     @Binding var selectedHabit: Habit?
-    @Binding var isRearranging: Bool
-    @Binding var isActivelyDragging: Bool
     @State private var showAddHabit = false
-    @StateObject private var dragState = DragState()
     
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -2251,255 +2186,203 @@ struct HabitsSection: View {
                     )
                 }
             } else {
-                // Habits list with proper layout
-                HabitListLayout(
-                    habits: habitManager.habits,
+                // Habit list with row-based layout
+                ReorderableHabitList(
                     habitManager: habitManager,
-                    selectedHabit: $selectedHabit,
-                    dragState: dragState
+                    selectedHabit: $selectedHabit
                 )
             }
         }
         .sheet(isPresented: $showAddHabit) {
             AddHabitSheet(habitManager: habitManager)
         }
-        .onChange(of: dragState.rearrangingHabitID) { _, newValue in
-            isRearranging = newValue != nil
-        }
-        .onChange(of: dragState.isActivelyDragging) { _, newValue in
-            isActivelyDragging = newValue
-        }
     }
 }
 
-
-// MARK: - Habit List Layout (handles rows and drag overlay)
-struct HabitListLayout: View {
-    let habits: [Habit]
+// MARK: - Reorderable Habit List with Row Layout
+struct ReorderableHabitList: View {
     @ObservedObject var habitManager: HabitManager
     @Binding var selectedHabit: Habit?
-    @ObservedObject var dragState: DragState
+    @State private var draggingHabitID: UUID? = nil
+    
+    var body: some View {
+        let rows = buildRows(from: habitManager.habits)
+        
+        VStack(spacing: 12) {
+            ForEach(rows, id: \.id) { row in
+                HStack(spacing: 12) {
+                    ForEach(row.habits) { habit in
+                        HabitCardWrapper(
+                            habit: habit,
+                            habitManager: habitManager,
+                            selectedHabit: $selectedHabit,
+                            draggingHabitID: $draggingHabitID
+                        )
+                    }
+                    
+                    // If single small widget in row, add invisible drop zone for the other half
+                    if row.habits.count == 1 && row.habits[0].widgetSize == .half {
+                        Rectangle()
+                            .fill(Color.clear)
+                            .frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
+                            .dropDestination(for: String.self) { items, location in
+                                // Drop into this slot = move after the lone small widget
+                                if let droppedIDString = items.first,
+                                   let droppedID = UUID(uuidString: droppedIDString),
+                                   let fromIndex = habitManager.habits.firstIndex(where: { $0.id == droppedID }),
+                                   let targetIndex = habitManager.habits.firstIndex(where: { $0.id == row.habits[0].id }) {
+                                    let toIndex = targetIndex + 1
+                                    if fromIndex != toIndex && fromIndex != targetIndex {
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            habitManager.moveHabit(from: fromIndex, to: min(toIndex, habitManager.habits.count))
+                                        }
+                                    }
+                                }
+                                draggingHabitID = nil
+                                return true
+                            } isTargeted: { _ in }
+                    }
+                }
+            }
+        }
+    }
     
     // Build rows: small widgets can pair, others get own row
-    private var rows: [HabitRow] {
-        var result: [HabitRow] = []
+    private func buildRows(from habits: [Habit]) -> [HabitRowData] {
+        var result: [HabitRowData] = []
         var pendingSmall: Habit? = nil
         
         for habit in habits {
             if habit.widgetSize == .half {
                 if let first = pendingSmall {
-                    result.append(HabitRow(habits: [first, habit]))
+                    result.append(HabitRowData(habits: [first, habit]))
                     pendingSmall = nil
                 } else {
                     pendingSmall = habit
                 }
             } else {
                 if let small = pendingSmall {
-                    result.append(HabitRow(habits: [small]))
+                    result.append(HabitRowData(habits: [small]))
                     pendingSmall = nil
                 }
-                result.append(HabitRow(habits: [habit]))
+                result.append(HabitRowData(habits: [habit]))
             }
         }
         
         if let small = pendingSmall {
-            result.append(HabitRow(habits: [small]))
+            result.append(HabitRowData(habits: [small]))
         }
         
         return result
     }
+}
+
+// Helper struct for row grouping with stable ID
+struct HabitRowData: Identifiable {
+    let habits: [Habit]
+    
+    var id: String {
+        habits.map { $0.id.uuidString }.joined(separator: "-")
+    }
+}
+
+// MARK: - Habit Card Wrapper with Drag Support
+struct HabitCardWrapper: View {
+    let habit: Habit
+    @ObservedObject var habitManager: HabitManager
+    @Binding var selectedHabit: Habit?
+    @Binding var draggingHabitID: UUID?
+    
+    @State private var isTargeted = false
     
     var body: some View {
-        ZStack {
-            // Base layout
-            VStack(spacing: 12) {
-                ForEach(Array(rows.enumerated()), id: \.element.id) { rowIndex, row in
-                    // Drop indicator above this row
-                    if let targetIdx = dragState.dragTargetIndex {
-                        let firstHabitInRow = row.habits.first
-                        let firstIndexInRow = firstHabitInRow.flatMap { h in habits.firstIndex(where: { $0.id == h.id }) }
-                        if firstIndexInRow == targetIdx {
-                            dropIndicator
-                        }
+        HabitCardContent(habit: habit)
+            .frame(maxWidth: .infinity)  // All cards expand to fill available space
+            .opacity(draggingHabitID == habit.id ? 0.3 : 1.0)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.green, lineWidth: 3)
+                    .opacity(isTargeted && draggingHabitID != habit.id ? 1 : 0)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if draggingHabitID == nil {
+                    selectedHabit = habit
+                }
+            }
+            .draggable(habit.id.uuidString) {
+                // Drag preview
+                HabitCardContent(habit: habit)
+                    .frame(width: 120, height: 80)
+                    .opacity(0.9)
+                    .onAppear {
+                        draggingHabitID = habit.id
+                        let impact = UIImpactFeedbackGenerator(style: .medium)
+                        impact.impactOccurred()
                     }
-                    
-                    HStack(spacing: 12) {
-                        ForEach(row.habits) { habit in
-                            let index = habits.firstIndex(where: { $0.id == habit.id }) ?? 0
-                            DraggableHabitCard(
-                                habit: habit,
-                                index: index,
-                                habitManager: habitManager,
-                                dragState: dragState,
-                                selectedHabit: $selectedHabit
-                            )
-                        }
+            }
+            .dropDestination(for: String.self) { items, location in
+                // Drop completed
+                if let droppedIDString = items.first,
+                   let droppedID = UUID(uuidString: droppedIDString),
+                   droppedID != habit.id {
+                    performMove(from: droppedID, to: habit.id)
+                }
+                draggingHabitID = nil
+                return true
+            } isTargeted: { targeted in
+                isTargeted = targeted
+            }
+            .contextMenu {
+                if habit.updateMode == .manual && habit.visualStyle == .grid {
+                    Button {
+                        habitManager.incrementProgress(for: habit)
+                    } label: {
+                        Label("Add Progress", systemImage: "plus.circle")
                     }
                 }
                 
-                // Drop indicator at the end if needed
-                if let targetIdx = dragState.dragTargetIndex, targetIdx == habits.count {
-                    dropIndicator
+                Button(role: .destructive) {
+                    habitManager.deleteHabit(habit)
+                } label: {
+                    Label("Delete Habit", systemImage: "trash")
                 }
             }
-            
-            // Tap to cancel overlay
-            if dragState.rearrangingHabitID != nil && !dragState.isActivelyDragging {
-                Color.black.opacity(0.001)
-                    .onTapGesture {
-                        cancelRearrange()
-                    }
-                    .allowsHitTesting(true)
-            }
-        }
     }
     
-    private var dropIndicator: some View {
-        HStack {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(Color.green)
-                .frame(height: 4)
+    private func performMove(from sourceID: UUID, to targetID: UUID) {
+        guard let fromIndex = habitManager.habits.firstIndex(where: { $0.id == sourceID }),
+              let toIndex = habitManager.habits.firstIndex(where: { $0.id == targetID }),
+              fromIndex != toIndex else {
+            return
         }
-        .padding(.vertical, 4)
-        .transition(.opacity)
-    }
-    
-    private func cancelRearrange() {
-        withAnimation(.spring(response: 0.3)) {
-            dragState.rearrangingHabitID = nil
-            dragState.dragOffset = .zero
-            dragState.dragTargetIndex = nil
-            dragState.isActivelyDragging = false
+        
+        withAnimation(.easeInOut(duration: 0.2)) {
+            habitManager.moveHabit(from: fromIndex, to: toIndex)
         }
+        
+        let impact = UIImpactFeedbackGenerator(style: .light)
+        impact.impactOccurred()
     }
 }
 
-// MARK: - Draggable Habit Card
-struct DraggableHabitCard: View {
+// MARK: - Habit Card Content (just the visual)
+struct HabitCardContent: View {
     let habit: Habit
-    let index: Int
-    @ObservedObject var habitManager: HabitManager
-    @ObservedObject var dragState: DragState
-    @Binding var selectedHabit: Habit?
-    
-    private var isRearrangeTarget: Bool {
-        dragState.rearrangingHabitID == habit.id
-    }
-    
-    private var isDragging: Bool {
-        isRearrangeTarget && dragState.isActivelyDragging
-    }
     
     var body: some View {
-        HabitCard(
-            habit: habit,
-            habitManager: habitManager,
-            onTap: {
-                if dragState.rearrangingHabitID == nil {
-                    selectedHabit = habit
-                }
-            },
-            onRearrange: {
-                startRearrange()
-            },
-            isRearranging: dragState.rearrangingHabitID != nil
-        )
-        .opacity(isDragging ? 0.9 : (isRearrangeTarget ? 0.7 : 1.0))
-        .scaleEffect(isDragging ? 1.05 : (isRearrangeTarget ? 1.02 : 1.0))
-        .offset(isDragging ? dragState.dragOffset : .zero)
-        .zIndex(isDragging ? 1000 : 0)
-        .shadow(color: isDragging ? .black.opacity(0.4) : .clear, radius: isDragging ? 20 : 0, x: 0, y: isDragging ? 10 : 0)
-        .overlay(
-            Group {
-                if isRearrangeTarget && !dragState.isActivelyDragging {
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.green, lineWidth: 3)
-                        .allowsHitTesting(false)
-                }
-            }
-        )
-        // Use simultaneousGesture with BOTH long press AND drag
-        .simultaneousGesture(
-            isRearrangeTarget ?
-            LongPressGesture(minimumDuration: 0.01)
-                .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-                .onChanged { value in
-                    switch value {
-                    case .second(true, let drag):
-                        if let drag = drag {
-                            if !dragState.isActivelyDragging {
-                                dragState.isActivelyDragging = true
-                                let impact = UIImpactFeedbackGenerator(style: .medium)
-                                impact.impactOccurred()
-                                print("✅ Started dragging")
-                            }
-                            dragState.dragOffset = drag.translation
-                            print("📏 Offset: \(drag.translation)")
-                            updateTargetIndex(for: drag.translation)
-                        }
-                    default:
-                        break
-                    }
-                }
-                .onEnded { _ in
-                    print("🏁 Drag ended")
-                    finishDrag()
-                }
-            : nil
-        )
-    }
-    
-    private func startRearrange() {
-        print("🚀 Start rearrange for: \(habit.name)")
-        dragState.rearrangingHabitID = habit.id
-        dragState.dragOffset = .zero
-        dragState.dragTargetIndex = nil
-        dragState.isActivelyDragging = false
-    }
-    
-    private func updateTargetIndex(for translation: CGSize) {
-        let rowHeight: CGFloat = 172
-        let movement = Int(round(translation.height / rowHeight))
-        var newIndex = index + movement
-        
-        newIndex = max(0, min(habitManager.habits.count, newIndex))
-        
-        if newIndex != index {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                dragState.dragTargetIndex = newIndex
-            }
-        } else {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                dragState.dragTargetIndex = nil
+        Group {
+            switch habit.visualStyle {
+            case .grid:
+                ContributionGridView(habit: habit)
+            case .text:
+                TextCounterView(habit: habit)
+            case .bar:
+                TimelineBarView(habit: habit)
             }
         }
     }
-    
-    private func finishDrag() {
-        if let targetIndex = dragState.dragTargetIndex, targetIndex != index {
-            let adjustedTarget = targetIndex > index ? targetIndex - 1 : targetIndex
-            habitManager.moveHabit(from: index, to: adjustedTarget)
-            
-            let impact = UIImpactFeedbackGenerator(style: .medium)
-            impact.impactOccurred()
-        }
-        
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-            dragState.dragOffset = .zero
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            dragState.rearrangingHabitID = nil
-            dragState.dragTargetIndex = nil
-            dragState.isActivelyDragging = false
-        }
-    }
-}
-
-// Helper struct for row grouping
-struct HabitRow: Identifiable {
-    let id = UUID()
-    let habits: [Habit]
 }
 
 // MARK: - Tracker Home Screen
@@ -2517,8 +2400,6 @@ struct TrackerView: View {
     @State private var showStatsCard = false
     @State private var showHabitsSection = false
     @State private var selectedHabit: Habit?
-    @State private var isRearrangingHabits = false
-    @State private var isActivelyDragging = false  // Only true while finger is dragging
     
     var body: some View {
         ZStack {
@@ -2604,9 +2485,7 @@ struct TrackerView: View {
                     // Habits Section
                     HabitsSection(
                         habitManager: habitManager,
-                        selectedHabit: $selectedHabit,
-                        isRearranging: $isRearrangingHabits,
-                        isActivelyDragging: $isActivelyDragging
+                        selectedHabit: $selectedHabit
                     )
                     .opacity(showHabitsSection ? 1 : 0)
                     .offset(y: showHabitsSection ? 0 : 20)
@@ -2616,10 +2495,8 @@ struct TrackerView: View {
                 }
                 .padding(.horizontal, 20)
             }
-            .scrollDisabled(isRearrangingHabits)
         }
         .gesture(
-            isRearrangingHabits ? nil :
             DragGesture(minimumDistance: 50)
                 .onEnded { value in
                     if value.translation.width < -50 && abs(value.translation.height) < 100 {
