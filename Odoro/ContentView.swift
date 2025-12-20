@@ -2375,7 +2375,7 @@ struct TimerScreen: View {
             
             let endTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
             let startTime = Date()
-            liveActivityManager.updateActivity(startTime: startTime, endTime: endTime, isStudy: isStudy, isPaused: true,
+            liveActivityManager.startActivity(startTime: startTime, endTime: endTime, isStudy: isStudy,
                                               sessionNumber: consecutiveSessions + 1,
                                               totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         }
