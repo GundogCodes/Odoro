@@ -2,8 +2,7 @@
 //  HabitWidgets.swift
 //  OdoroWidgetExtension
 //
-//  Home screen widgets for habit tracking
-//  Add this file to WIDGET EXTENSION target ONLY
+//  Home screen widgets matching app aesthetic
 //
 
 import WidgetKit
@@ -14,7 +13,6 @@ import AppIntents
 struct HabitWidgetEntry: TimelineEntry {
     let date: Date
     let habit: Habit?
-    let widgetFamily: WidgetFamily
 }
 
 // MARK: - Timeline Provider with Intent
@@ -23,71 +21,30 @@ struct HabitWidgetProvider: AppIntentTimelineProvider {
     typealias Intent = SelectHabitIntent
     
     func placeholder(in context: Context) -> HabitWidgetEntry {
-        HabitWidgetEntry(date: Date(), habit: sampleHabit(for: context.family), widgetFamily: context.family)
+        HabitWidgetEntry(date: Date(), habit: nil)
     }
     
     func snapshot(for configuration: SelectHabitIntent, in context: Context) async -> HabitWidgetEntry {
-        let habit = getHabit(for: configuration, family: context.family)
-        return HabitWidgetEntry(date: Date(), habit: habit, widgetFamily: context.family)
+        let habit = getHabit(for: configuration)
+        return HabitWidgetEntry(date: Date(), habit: habit)
     }
     
     func timeline(for configuration: SelectHabitIntent, in context: Context) async -> Timeline<HabitWidgetEntry> {
-        let habit = getHabit(for: configuration, family: context.family)
-        let entry = HabitWidgetEntry(date: Date(), habit: habit, widgetFamily: context.family)
+        let habit = getHabit(for: configuration)
+        let entry = HabitWidgetEntry(date: Date(), habit: habit)
         
-        // Refresh every 15 minutes
-        let nextUpdate = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date()
+        let nextUpdate = Calendar.current.date(byAdding: .minute, value: 30, to: Date()) ?? Date()
         return Timeline(entries: [entry], policy: .after(nextUpdate))
     }
     
-    private func getHabit(for configuration: SelectHabitIntent, family: WidgetFamily) -> Habit? {
+    private func getHabit(for configuration: SelectHabitIntent) -> Habit? {
         let habits = HabitDataStore.shared.activeHabits
         
-        // If user selected a specific habit, use that
         if let selectedHabitID = configuration.habit?.id,
            let habit = habits.first(where: { $0.id.uuidString == selectedHabitID }) {
             return habit
         }
-        
-        // Otherwise return first habit
         return habits.first
-    }
-    
-    private func sampleHabit(for family: WidgetFamily) -> Habit {
-        let size: HabitWidgetSize = {
-            switch family {
-            case .systemSmall: return .half
-            case .systemMedium: return .fullMedium
-            case .systemLarge: return .full
-            default: return .full
-            }
-        }()
-        
-        return Habit(
-            id: UUID(),
-            name: "Sample Habit",
-            icon: "target",
-            type: .countUp,
-            updateMode: .auto,
-            visualStyle: .grid,
-            widgetSize: size,
-            cellUnit: .day,
-            durationType: .customRange,
-            customDuration: 30,
-            targetDate: nil,
-            textCounterDuration: 30,
-            timelineTickUnit: .day,
-            timelineDuration: 30,
-            currentValue: 0,
-            cycleCount: 0,
-            manuallyFilledCells: [],
-            notes: [],
-            isCompleted: false,
-            completedAt: nil,
-            timeUnit: .days,
-            color: .purple,
-            createdAt: Calendar.current.date(byAdding: .day, value: -12, to: Date()) ?? Date()
-        )
     }
 }
 
@@ -95,6 +52,7 @@ struct HabitWidgetProvider: AppIntentTimelineProvider {
 struct HabitWidgetView: View {
     let entry: HabitWidgetEntry
     @Environment(\.widgetFamily) var family
+    @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
         Group {
@@ -102,10 +60,10 @@ struct HabitWidgetView: View {
                 switch habit.visualStyle {
                 case .grid:
                     WidgetGridView(habit: habit, family: family)
-                case .text:
-                    WidgetTextCounterView(habit: habit, family: family)
                 case .bar:
                     WidgetTimelineBarView(habit: habit, family: family)
+                case .text:
+                    WidgetTextCounterView(habit: habit, family: family)
                 }
             } else {
                 EmptyWidgetView()
@@ -114,125 +72,27 @@ struct HabitWidgetView: View {
     }
 }
 
-// MARK: - Widget Background (Wavy Design)
-struct WidgetBackground: View {
-    var body: some View {
-        ZStack {
-            // Base gradient matching your app
-            LinearGradient(
-                colors: [
-                    Color(red: 0.08, green: 0.06, blue: 0.15),
-                    Color(red: 0.12, green: 0.08, blue: 0.22)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            
-            // Subtle wave overlay
-            GeometryReader { geo in
-                WaveShape(amplitude: 20, frequency: 2, phase: 0)
-                    .fill(
-                        LinearGradient(
-                            colors: [.purple.opacity(0.15), .blue.opacity(0.1)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .offset(y: geo.size.height * 0.3)
-                
-                WaveShape(amplitude: 15, frequency: 1.5, phase: 0.5)
-                    .fill(
-                        LinearGradient(
-                            colors: [.blue.opacity(0.1), .purple.opacity(0.08)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .offset(y: geo.size.height * 0.5)
-            }
-        }
-    }
-}
-
-struct WaveShape: Shape {
-    var amplitude: CGFloat
-    var frequency: CGFloat
-    var phase: CGFloat
-    
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let width = rect.width
-        let height = rect.height
-        
-        path.move(to: CGPoint(x: 0, y: height))
-        
-        for x in stride(from: 0, through: width, by: 1) {
-            let relativeX = x / width
-            let sine = sin((relativeX * frequency * .pi * 2) + (phase * .pi * 2))
-            let y = amplitude * sine + height * 0.3
-            path.addLine(to: CGPoint(x: x, y: y))
-        }
-        
-        path.addLine(to: CGPoint(x: width, y: height))
-        path.closeSubpath()
-        
-        return path
-    }
-}
-
-// MARK: - Empty State (with debug)
+// MARK: - Empty State
 struct EmptyWidgetView: View {
+    @Environment(\.colorScheme) var colorScheme
+    
     var body: some View {
-        let result = debugLoadHabits()
-        
         VStack(spacing: 8) {
             Image(systemName: "plus.circle.fill")
-                .font(.system(size: 24))
-                .foregroundStyle(.purple)
+                .font(.system(size: 28))
+                .foregroundStyle(
+                    LinearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
             
-            if let error = result.error {
-                Text("Error:")
-                    .font(.caption2)
-                    .foregroundColor(.red)
-                Text(error)
-                    .font(.system(size: 8))
-                    .foregroundColor(.red)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(4)
-            } else {
-                Text("Total: \(result.count)")
-                    .font(.caption)
-                    .foregroundColor(.white)
-                Text("Active: \(result.active)")
-                    .font(.caption)
-                    .foregroundColor(.white)
-            }
+            Text("Add a habit")
+                .font(.subheadline.weight(.medium))
+                .foregroundColor(colorScheme == .dark ? .white : .primary)
+            
+            Text("to see progress")
+                .font(.caption2)
+                .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(8)
-    }
-    
-    func debugLoadHabits() -> (count: Int, active: Int, error: String?) {
-        guard let userDefaults = UserDefaults(suiteName: "group.com.gunisharma.com") else {
-            return (0, 0, "No App Group")
-        }
-        
-        guard let data = userDefaults.data(forKey: "sharedHabits") else {
-            return (0, 0, "No data")
-        }
-        
-        do {
-            let habits = try JSONDecoder().decode([Habit].self, from: data)
-            let active = habits.filter { !$0.isCompleted }.count
-            return (habits.count, active, nil)
-        } catch let DecodingError.keyNotFound(key, _) {
-            return (0, 0, "Missing: \(key.stringValue)")
-        } catch let DecodingError.typeMismatch(type, context) {
-            let path = context.codingPath.map { $0.stringValue }.joined(separator: ".")
-            return (0, 0, "Type \(type) at \(path)")
-        } catch {
-            return (0, 0, "\(error)")
-        }
     }
 }
 
@@ -240,11 +100,20 @@ struct EmptyWidgetView: View {
 struct WidgetGridView: View {
     let habit: Habit
     let family: WidgetFamily
+    @Environment(\.colorScheme) var colorScheme
     
     private var isSmall: Bool { family == .systemSmall }
+    private var isLarge: Bool { family == .systemLarge }
     private var dimensions: (columns: Int, rows: Int) { habit.gridDimensions }
     
+    private var textColor: Color {
+        colorScheme == .dark ? .white : .primary
+    }
+    
     private var filledCellsForDisplay: Int {
+        if habit.updateMode == .manual {
+            return habit.manuallyFilledCells.count
+        }
         let filled = habit.filledCells()
         if habit.type == .countdown {
             return max(0, habit.totalCells - filled)
@@ -267,139 +136,87 @@ struct WidgetGridView: View {
         
         if habit.updateMode == .manual {
             let filledCount = habit.manuallyFilledCells.count
-            if habit.durationType == .indefinite {
-                let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
-                return "\(filledCount)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
-            }
             return "\(filledCount)/\(totalDuration)"
         }
         
         let elapsed = habit.elapsedCells
-        if habit.durationType == .indefinite {
-            let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
-            return "\(pageInfo.filledInCurrentPage)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
-        }
-        
-        if pageInfo.totalPages > 1 {
-            return "\(elapsed)/\(totalDuration)\(unitSuffix)"
-        }
         return "\(elapsed)/\(totalDuration)\(unitSuffix)"
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: isSmall ? 4 : 6) {
+        VStack(alignment: .leading, spacing: 6) {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: habit.icon)
-                    .font(isSmall ? .caption2 : .caption)
+                    .font(isSmall ? .caption : .subheadline)
                     .foregroundColor(habit.color.color)
                 Text(habit.name)
-                    .font(isSmall ? .caption2.weight(.semibold) : .caption.weight(.semibold))
-                    .foregroundColor(.white)
+                    .font(isSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                    .foregroundColor(textColor)
                     .lineLimit(1)
                 Spacer()
                 Text(progressLabel)
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.7))
+                    .font(isSmall ? .caption2 : .caption)
+                    .foregroundColor(textColor.opacity(0.7))
             }
             
-            // Grid - takes all remaining space
-            WidgetGridContent(
-                columns: dimensions.columns,
-                rows: dimensions.rows,
-                filledCells: filledCellsForDisplay,
-                totalCells: habit.totalCells,
-                color: habit.color.color,
-                spacing: isSmall ? 2 : 3,
-                isCountdown: habit.type == .countdown,
-                isManualMode: habit.updateMode == .manual,
-                manuallyFilledCells: habit.manuallyFilledCells,
-                currentCellIndex: habit.currentCellIndex
-            )
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-struct WidgetGridContent: View {
-    let columns: Int
-    let rows: Int
-    let filledCells: Int
-    let totalCells: Int
-    let color: Color
-    let spacing: CGFloat
-    let isCountdown: Bool
-    let isManualMode: Bool
-    let manuallyFilledCells: Set<Int>
-    let currentCellIndex: Int
-    
-    var body: some View {
-        GeometryReader { geo in
-            let availableWidth = geo.size.width
-            let availableHeight = geo.size.height
-            let totalHSpacing = spacing * CGFloat(columns - 1)
-            let totalVSpacing = spacing * CGFloat(rows - 1)
-            let cellWidth = (availableWidth - totalHSpacing) / CGFloat(columns)
-            let cellHeight = (availableHeight - totalVSpacing) / CGFloat(rows)
-            
-            VStack(spacing: spacing) {
-                ForEach(0..<rows, id: \.self) { row in
-                    HStack(spacing: spacing) {
-                        ForEach(0..<columns, id: \.self) { col in
-                            let cellIndex = (row * columns) + col
-                            
-                            if cellIndex < totalCells {
-                                RoundedRectangle(cornerRadius: min(cellWidth, cellHeight) * 0.15)
-                                    .fill(cellColor(at: cellIndex))
-                                    .frame(width: cellWidth, height: cellHeight)
-                            } else {
-                                Color.clear
-                                    .frame(width: cellWidth, height: cellHeight)
+            // Grid
+            GeometryReader { geo in
+                let spacing: CGFloat = isSmall ? 3 : 4
+                let cols = dimensions.columns
+                let rows = dimensions.rows
+                let totalHSpacing = spacing * CGFloat(cols - 1)
+                let totalVSpacing = spacing * CGFloat(rows - 1)
+                let cellWidth = (geo.size.width - totalHSpacing) / CGFloat(cols)
+                let cellHeight = (geo.size.height - totalVSpacing) / CGFloat(rows)
+                
+                VStack(spacing: spacing) {
+                    ForEach(0..<rows, id: \.self) { row in
+                        HStack(spacing: spacing) {
+                            ForEach(0..<cols, id: \.self) { col in
+                                let cellIndex = (row * cols) + col
+                                
+                                if cellIndex < habit.totalCells {
+                                    RoundedRectangle(cornerRadius: min(cellWidth, cellHeight) * 0.15)
+                                        .fill(cellColor(at: cellIndex))
+                                        .frame(width: cellWidth, height: cellHeight)
+                                }
                             }
                         }
                     }
                 }
             }
         }
+        .padding(12)
     }
     
     private func cellColor(at index: Int) -> Color {
-        if isManualMode {
-            if manuallyFilledCells.contains(index) {
-                return color
-            } else if index == currentCellIndex {
-                return Color.white.opacity(0.25)
-            } else if index > currentCellIndex {
-                return Color.white.opacity(0.1)
-            } else {
-                return Color.white.opacity(0.15)
+        let emptyColor = colorScheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.1)
+        
+        if habit.updateMode == .manual {
+            if habit.manuallyFilledCells.contains(index) {
+                return habit.color.color
             }
+            return emptyColor
         } else {
-            if isCellFilled(at: index) {
-                return color
-            } else {
-                return Color.white.opacity(0.15)
-            }
-        }
-    }
-    
-    private func isCellFilled(at index: Int) -> Bool {
-        if isCountdown {
-            let emptyCount = totalCells - filledCells
-            return index >= emptyCount && index < totalCells
-        } else {
-            return index < filledCells
+            let isFilled = index < filledCellsForDisplay
+            return isFilled ? habit.color.color : emptyColor
         }
     }
 }
 
-// MARK: - Text Counter Widget View
+// MARK: - Text Counter Widget View (matches app)
 struct WidgetTextCounterView: View {
     let habit: Habit
     let family: WidgetFamily
+    @Environment(\.colorScheme) var colorScheme
     
     private var isSmall: Bool { family == .systemSmall }
     private var isLarge: Bool { family == .systemLarge }
+    
+    private var textColor: Color {
+        colorScheme == .dark ? .white : .primary
+    }
     
     private var calculatedTargetDate: Date {
         if let target = habit.targetDate { return target }
@@ -407,20 +224,13 @@ struct WidgetTextCounterView: View {
         let duration = habit.textCounterDuration
         
         switch habit.timeUnit {
-        case .seconds:
-            return calendar.date(byAdding: .second, value: duration, to: habit.startDate) ?? habit.startDate
-        case .minutes:
-            return calendar.date(byAdding: .minute, value: duration, to: habit.startDate) ?? habit.startDate
-        case .hours:
-            return calendar.date(byAdding: .hour, value: duration, to: habit.startDate) ?? habit.startDate
-        case .days:
-            return calendar.date(byAdding: .day, value: duration, to: habit.startDate) ?? habit.startDate
-        case .weeks:
-            return calendar.date(byAdding: .weekOfYear, value: duration, to: habit.startDate) ?? habit.startDate
-        case .months:
-            return calendar.date(byAdding: .month, value: duration, to: habit.startDate) ?? habit.startDate
-        case .years:
-            return calendar.date(byAdding: .year, value: duration, to: habit.startDate) ?? habit.startDate
+        case .seconds: return calendar.date(byAdding: .second, value: duration, to: habit.startDate) ?? habit.startDate
+        case .minutes: return calendar.date(byAdding: .minute, value: duration, to: habit.startDate) ?? habit.startDate
+        case .hours: return calendar.date(byAdding: .hour, value: duration, to: habit.startDate) ?? habit.startDate
+        case .days: return calendar.date(byAdding: .day, value: duration, to: habit.startDate) ?? habit.startDate
+        case .weeks: return calendar.date(byAdding: .weekOfYear, value: duration, to: habit.startDate) ?? habit.startDate
+        case .months: return calendar.date(byAdding: .month, value: duration, to: habit.startDate) ?? habit.startDate
+        case .years: return calendar.date(byAdding: .year, value: duration, to: habit.startDate) ?? habit.startDate
         }
     }
     
@@ -434,10 +244,9 @@ struct WidgetTextCounterView: View {
     }
     
     private var progressToTarget: CGFloat {
-        let now = Date()
         let totalInterval = calculatedTargetDate.timeIntervalSince(habit.startDate)
         guard totalInterval > 0 else { return 0 }
-        let elapsed = now.timeIntervalSince(habit.startDate)
+        let elapsed = Date().timeIntervalSince(habit.startDate)
         let progress = CGFloat(min(max(elapsed / totalInterval, 0), 1))
         return habit.type == .countdown ? 1.0 - progress : progress
     }
@@ -459,64 +268,123 @@ struct WidgetTextCounterView: View {
         habit.timeUnit.rawValue.lowercased()
     }
     
+    // Time components for medium/large widgets
+    private var timeComponents: [(value: String, label: String)] {
+        let interval = abs(timeInterval)
+        let totalSeconds = Int(interval)
+        let seconds = totalSeconds % 60
+        let totalMinutes = totalSeconds / 60
+        let minutes = totalMinutes % 60
+        let totalHours = totalMinutes / 60
+        let hours = totalHours % 24
+        let totalDays = totalHours / 24
+        
+        switch habit.timeUnit {
+        case .seconds:
+            return [("\(totalSeconds)", "sec")]
+        case .minutes:
+            return [("\(totalMinutes)", "min"), (String(format: "%02d", seconds), "sec")]
+        case .hours:
+            return [("\(totalHours)", "hrs"), (String(format: "%02d", minutes), "min"), (String(format: "%02d", seconds), "sec")]
+        case .days:
+            return [("\(totalDays)", "days"), (String(format: "%02d", hours), "hrs"), (String(format: "%02d", minutes), "min")]
+        case .weeks:
+            let weeks = totalDays / 7
+            let days = totalDays % 7
+            return [("\(weeks)", "wks"), ("\(days)", "days"), (String(format: "%02d", hours), "hrs")]
+        case .months:
+            let months = totalDays / 30
+            let days = totalDays % 30
+            return [("\(months)", "mos"), ("\(days)", "days"), (String(format: "%02d", hours), "hrs")]
+        case .years:
+            let years = totalDays / 365
+            let months = (totalDays % 365) / 30
+            let days = (totalDays % 365) % 30
+            return [("\(years)", "yrs"), ("\(months)", "mos"), ("\(days)", "days")]
+        }
+    }
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: isSmall ? 6 : 10) {
+        VStack(alignment: .leading, spacing: isSmall ? 8 : 12) {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: habit.icon)
-                    .font(isSmall ? .caption2 : .caption)
+                    .font(isSmall ? .caption : .subheadline)
                     .foregroundColor(habit.color.color)
                 Text(habit.name)
-                    .font(isSmall ? .caption2.weight(.semibold) : .caption.weight(.semibold))
-                    .foregroundColor(.white)
+                    .font(isSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                    .foregroundColor(textColor)
                     .lineLimit(1)
                 Spacer()
                 Text(habit.type == .countdown ? "remaining" : "elapsed")
                     .font(.caption2)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(textColor.opacity(0.5))
             }
             
             Spacer(minLength: 0)
             
-            // Counter display
-            VStack(spacing: 4) {
-                Text(primaryValue)
-                    .font(.system(size: isSmall ? 28 : (isLarge ? 44 : 36), weight: .bold, design: .rounded))
-                    .foregroundStyle(habit.color.gradient)
-                Text(primaryLabel)
-                    .font(isSmall ? .caption2 : .caption)
-                    .foregroundColor(.white.opacity(0.6))
+            if isSmall {
+                // Small: Show primary unit centered
+                VStack(spacing: 4) {
+                    Text(primaryValue)
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .foregroundStyle(habit.color.gradient)
+                        .minimumScaleFactor(0.5)
+                        .lineLimit(1)
+                    Text(primaryLabel)
+                        .font(.caption)
+                        .foregroundColor(textColor.opacity(0.6))
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                // Medium/Large: Multiple time components
+                HStack(spacing: isLarge ? 16 : 10) {
+                    ForEach(timeComponents.prefix(isLarge ? 4 : 3), id: \.label) { component in
+                        VStack(spacing: 4) {
+                            Text(component.value)
+                                .font(.system(size: isLarge ? 32 : 26, weight: .bold, design: .rounded))
+                                .foregroundStyle(habit.color.gradient)
+                            Text(component.label)
+                                .font(.caption2)
+                                .foregroundColor(textColor.opacity(0.6))
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
             }
-            .frame(maxWidth: .infinity)
             
             Spacer(minLength: 0)
             
-            // Progress bar
+            // Progress indicator
             if habit.durationType != .indefinite {
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(.white.opacity(0.1))
-                        .frame(height: 4)
-                    GeometryReader { geo in
-                        RoundedRectangle(cornerRadius: 3)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.1))
+                        RoundedRectangle(cornerRadius: 4)
                             .fill(habit.color.gradient)
                             .frame(width: geo.size.width * progressToTarget)
                     }
-                    .frame(height: 4)
                 }
+                .frame(height: 6)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(12)
     }
 }
 
-// MARK: - Timeline Bar Widget View
+// MARK: - Timeline Bar Widget View (matches app with vertical ticks)
 struct WidgetTimelineBarView: View {
     let habit: Habit
     let family: WidgetFamily
+    @Environment(\.colorScheme) var colorScheme
     
     private var isSmall: Bool { family == .systemSmall }
     private var isLarge: Bool { family == .systemLarge }
+    
+    private var textColor: Color {
+        colorScheme == .dark ? .white : .primary
+    }
     
     private var calculatedTargetDate: Date {
         if let target = habit.targetDate { return target }
@@ -524,48 +392,39 @@ struct WidgetTimelineBarView: View {
         let duration = habit.timelineDuration
         
         switch habit.timelineTickUnit {
-        case .minute:
-            return calendar.date(byAdding: .minute, value: duration, to: habit.startDate) ?? habit.startDate
-        case .hour:
-            return calendar.date(byAdding: .hour, value: duration, to: habit.startDate) ?? habit.startDate
-        case .day:
-            return calendar.date(byAdding: .day, value: duration, to: habit.startDate) ?? habit.startDate
-        case .week:
-            return calendar.date(byAdding: .weekOfYear, value: duration, to: habit.startDate) ?? habit.startDate
-        case .month:
-            return calendar.date(byAdding: .month, value: duration, to: habit.startDate) ?? habit.startDate
-        case .year:
-            return calendar.date(byAdding: .year, value: duration, to: habit.startDate) ?? habit.startDate
+        case .minute: return calendar.date(byAdding: .minute, value: duration, to: habit.startDate) ?? habit.startDate
+        case .hour: return calendar.date(byAdding: .hour, value: duration, to: habit.startDate) ?? habit.startDate
+        case .day: return calendar.date(byAdding: .day, value: duration, to: habit.startDate) ?? habit.startDate
+        case .week: return calendar.date(byAdding: .weekOfYear, value: duration, to: habit.startDate) ?? habit.startDate
+        case .month: return calendar.date(byAdding: .month, value: duration, to: habit.startDate) ?? habit.startDate
+        case .year: return calendar.date(byAdding: .year, value: duration, to: habit.startDate) ?? habit.startDate
         }
     }
     
-    private var totalTicks: Int {
-        habit.timelineDuration
-    }
+    private var totalTicks: Int { habit.timelineDuration }
     
     private var elapsedTicks: Int {
         let calendar = Calendar.current
         let now = Date()
+        var ticks: Int
         switch habit.timelineTickUnit {
-        case .minute:
-            return max(0, min(totalTicks, calendar.dateComponents([.minute], from: habit.startDate, to: now).minute ?? 0))
-        case .hour:
-            return max(0, min(totalTicks, calendar.dateComponents([.hour], from: habit.startDate, to: now).hour ?? 0))
-        case .day:
-            return max(0, min(totalTicks, calendar.dateComponents([.day], from: habit.startDate, to: now).day ?? 0))
+        case .minute: ticks = calendar.dateComponents([.minute], from: habit.startDate, to: now).minute ?? 0
+        case .hour: ticks = calendar.dateComponents([.hour], from: habit.startDate, to: now).hour ?? 0
+        case .day: ticks = calendar.dateComponents([.day], from: habit.startDate, to: now).day ?? 0
         case .week:
             let days = calendar.dateComponents([.day], from: habit.startDate, to: now).day ?? 0
-            return max(0, min(totalTicks, days / 7))
-        case .month:
-            return max(0, min(totalTicks, calendar.dateComponents([.month], from: habit.startDate, to: now).month ?? 0))
-        case .year:
-            return max(0, min(totalTicks, calendar.dateComponents([.year], from: habit.startDate, to: now).year ?? 0))
+            ticks = days / 7
+        case .month: ticks = calendar.dateComponents([.month], from: habit.startDate, to: now).month ?? 0
+        case .year: ticks = calendar.dateComponents([.year], from: habit.startDate, to: now).year ?? 0
         }
+        return max(0, min(ticks, totalTicks))
     }
     
     private var progress: CGFloat {
         guard totalTicks > 0 else { return 0 }
-        return CGFloat(elapsedTicks) / CGFloat(totalTicks)
+        let rawProgress = CGFloat(elapsedTicks) / CGFloat(totalTicks)
+        let clampedProgress = min(max(rawProgress, 0), 1)
+        return habit.type == .countdown ? 1.0 - clampedProgress : clampedProgress
     }
     
     private var mainTimeDisplay: String {
@@ -598,8 +457,31 @@ struct WidgetTimelineBarView: View {
         }
     }
     
-    private var tickCount: Int {
-        isSmall ? 8 : (isLarge ? 20 : 15)
+    private var progressText: String {
+        if habit.type == .countdown {
+            return String(format: "%.1f%% remaining", progress * 100)
+        } else {
+            return String(format: "%.1f%% complete", (1 - progress) * 100)
+        }
+    }
+    
+    private var maxVisibleTicks: Int {
+        switch family {
+        case .systemSmall: return 10
+        case .systemMedium: return 20
+        case .systemLarge: return 30
+        default: return 20
+        }
+    }
+    
+    private func isTickFilled(index: Int, total: Int) -> Bool {
+        guard total > 0 else { return false }
+        let tickProgress = CGFloat(index) / CGFloat(total)
+        if habit.type == .countdown {
+            return tickProgress >= (1.0 - progress)
+        } else {
+            return tickProgress <= progress
+        }
     }
     
     var body: some View {
@@ -607,54 +489,96 @@ struct WidgetTimelineBarView: View {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: habit.icon)
-                    .font(isSmall ? .caption2 : .caption)
+                    .font(isSmall ? .caption : .subheadline)
                     .foregroundColor(habit.color.color)
                 Text(habit.name)
-                    .font(isSmall ? .caption2.weight(.semibold) : .caption.weight(.semibold))
-                    .foregroundColor(.white)
+                    .font(isSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                    .foregroundColor(textColor)
                     .lineLimit(1)
                 Spacer()
                 Text(habit.type == .countdown ? "remaining" : "elapsed")
                     .font(.caption2)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(textColor.opacity(0.5))
             }
             
-            Spacer(minLength: 0)
-            
-            // Main time display
+            // Time display
             Text(mainTimeDisplay)
-                .font(.system(size: isSmall ? 20 : (isLarge ? 32 : 26), weight: .bold, design: .rounded))
+                .font(.system(size: isSmall ? 20 : (isLarge ? 28 : 24), weight: .bold, design: .rounded))
                 .foregroundStyle(habit.color.gradient)
-                .frame(maxWidth: .infinity, alignment: .center)
+                .frame(maxWidth: .infinity, alignment: isSmall ? .center : .leading)
             
-            Spacer(minLength: 0)
-            
-            // Timeline ticks
-            HStack(spacing: isSmall ? 2 : 3) {
-                ForEach(0..<tickCount, id: \.self) { index in
-                    let tickProgress = CGFloat(index) / CGFloat(tickCount - 1)
-                    let isFilled = habit.type == .countdown
-                        ? tickProgress >= (1.0 - progress)
-                        : tickProgress <= progress
-                    
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(isFilled ? habit.color.color : Color.white.opacity(0.15))
-                        .frame(height: isSmall ? 4 : 6)
+            // Progress info (not on small)
+            if !isSmall {
+                HStack {
+                    Text(progressText)
+                        .font(.caption)
+                        .foregroundColor(textColor.opacity(0.7))
+                    Spacer()
+                    Text("\(elapsedTicks) / \(totalTicks) \(habit.timelineTickUnit.displayName.lowercased())")
+                        .font(.caption)
+                        .foregroundColor(textColor.opacity(0.7))
                 }
             }
             
-            // Labels
-            HStack {
-                Text(habit.startDate.formatted(.dateTime.month(.abbreviated).day()))
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.5))
-                Spacer()
-                Text(calculatedTargetDate.formatted(.dateTime.month(.abbreviated).day()))
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.5))
+            Spacer(minLength: 0)
+            
+            // Timeline with vertical ticks (like the app)
+            GeometryReader { geo in
+                let tickCount = min(totalTicks, maxVisibleTicks)
+                let tickSpacing = tickCount > 1 ? geo.size.width / CGFloat(tickCount) : geo.size.width
+                let barHeight: CGFloat = isLarge ? 8 : 6
+                let tickHeight: CGFloat = isLarge ? 20 : 16
+                
+                ZStack(alignment: .leading) {
+                    // Background track
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(colorScheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.1))
+                        .frame(height: barHeight)
+                        .offset(y: (tickHeight - barHeight) / 2)
+                    
+                    // Progress fill
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(habit.color.gradient)
+                        .frame(width: geo.size.width * progress, height: barHeight)
+                        .offset(y: (tickHeight - barHeight) / 2)
+                    
+                    // Tick marks
+                    ForEach(0..<tickCount + 1, id: \.self) { index in
+                        let xPosition = CGFloat(index) * tickSpacing
+                        let isFilled = isTickFilled(index: index, total: tickCount)
+                        
+                        Rectangle()
+                            .fill(isFilled ? habit.color.color : (colorScheme == .dark ? Color.white.opacity(0.3) : Color.black.opacity(0.2)))
+                            .frame(width: isLarge ? 2 : 1.5, height: tickHeight)
+                            .position(x: xPosition, y: tickHeight / 2)
+                    }
+                }
+                .frame(height: tickHeight)
             }
+            .frame(height: isLarge ? 20 : 16)
+            
+            // Tick labels (not on small)
+            if !isSmall {
+                HStack {
+                    Text(habit.startDate.formatted(.dateTime.month(.abbreviated).day()))
+                        .font(.caption2)
+                        .foregroundColor(textColor.opacity(0.5))
+                    Spacer()
+                    if totalTicks > 2 {
+                        Text("\(totalTicks / 2) \(habit.timelineTickUnit.displayName.lowercased())")
+                            .font(.caption2)
+                            .foregroundColor(textColor.opacity(0.5))
+                        Spacer()
+                    }
+                    Text(calculatedTargetDate.formatted(.dateTime.month(.abbreviated).day()))
+                        .font(.caption2)
+                        .foregroundColor(textColor.opacity(0.5))
+                }
+            }
+            
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(12)
     }
 }
 
@@ -674,21 +598,17 @@ struct HabitWidget: Widget {
                 }
         }
         .configurationDisplayName("Habit Tracker")
-        .description("Track your habit progress on your home screen.")
+        .description("Track your habit progress.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()
     }
 }
 
-// MARK: - Preview
-#Preview("Small", as: .systemSmall) {
-    HabitWidget()
-} timeline: {
-    HabitWidgetEntry(date: Date(), habit: nil, widgetFamily: .systemSmall)
-}
-
-#Preview("Medium", as: .systemMedium) {
-    HabitWidget()
-} timeline: {
-    HabitWidgetEntry(date: Date(), habit: nil, widgetFamily: .systemMedium)
+// MARK: - Widget Background
+struct WidgetBackground: View {
+    @Environment(\.colorScheme) var colorScheme
+    
+    var body: some View {
+        colorScheme == .dark ? Color.black : Color.white
+    }
 }

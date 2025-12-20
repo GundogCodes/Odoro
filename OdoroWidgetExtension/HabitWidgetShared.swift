@@ -11,7 +11,7 @@ import SwiftUI
 
 // MARK: - App Group Configuration
 struct AppGroupConfig {
-    static let suiteName = "group.com.gunisharma.com"
+    static let suiteName = "group.com.gunisharma.odoro"
     static let habitsKey = "sharedHabits"
 }
 
