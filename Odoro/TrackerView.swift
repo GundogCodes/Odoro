@@ -14,8 +14,8 @@ enum HabitUpdateMode: String, Codable, CaseIterable {
 
 enum HabitVisualStyle: String, Codable, CaseIterable {
     case grid = "Progress Grid"       // Grid that fills up
-    case text = "Text Counter"        // Day/week/hr/sec text
     case bar = "Timeline Bar"         // Filling bar
+    case text = "Text Counter"        // Day/week/hr/sec text
 }
 
 enum HabitTimeUnit: String, Codable, CaseIterable {
@@ -453,12 +453,39 @@ class HabitManager: ObservableObject {
     
     init() {
         load()
+        debugWidgetSync() 
+    }
+    func debugWidgetSync() {
+        print("🔍 DEBUG: Checking App Group...")
+        
+        guard let defaults = UserDefaults(suiteName: "group.com.gunisharma.com") else {
+            print("❌ Cannot access App Group - check App Group is enabled for main app target")
+            return
+        }
+        
+        // Try to save
+        if let encoded = try? JSONEncoder().encode(habits) {
+            defaults.set(encoded, forKey: "sharedHabits")
+            print("✅ Saved \(habits.count) habits to App Group (\(encoded.count) bytes)")
+        }
+        
+        // Try to read back
+        if let data = defaults.data(forKey: "sharedHabits"),
+           let decoded = try? JSONDecoder().decode([Habit].self, from: data) {
+            print("✅ Read back \(decoded.count) habits from App Group")
+            for habit in decoded {
+                print("   - \(habit.name) (completed: \(habit.isCompleted))")
+            }
+        } else {
+            print("❌ Could not read habits from App Group")
+        }
     }
     
     func save() {
         if let encoded = try? JSONEncoder().encode(habits) {
             UserDefaults.standard.set(encoded, forKey: saveKey)
         }
+        syncToWidget() 
     }
     
     func load() {
