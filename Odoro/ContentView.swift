@@ -491,6 +491,9 @@ class AppSettings: ObservableObject {
     @Published var longBreakEnabled: Bool {
         didSet { UserDefaults.standard.set(longBreakEnabled, forKey: "longBreakEnabled") }
     }
+    @Published var timerNotificationsEnabled: Bool {
+        didSet { UserDefaults.standard.set(timerNotificationsEnabled, forKey: "timerNotificationsEnabled") }
+    }
     
     init() {
         self.studyColor = Self.loadColor(key: "studyColor") ?? Self.defaultStudyColor
@@ -506,6 +509,13 @@ class AppSettings: ObservableObject {
         self.sessionsUntilLongBreak = savedSessions > 0 ? savedSessions : 4
         
         self.longBreakEnabled = UserDefaults.standard.bool(forKey: "longBreakEnabled")
+        
+        // Default to true if not set (first launch)
+        if UserDefaults.standard.object(forKey: "timerNotificationsEnabled") == nil {
+            self.timerNotificationsEnabled = true
+        } else {
+            self.timerNotificationsEnabled = UserDefaults.standard.bool(forKey: "timerNotificationsEnabled")
+        }
     }
     
     func resetToDefaults() {
@@ -1409,6 +1419,16 @@ struct SettingsPanel: View {
                 }
                 Spacer()
                 Toggle("", isOn: $settings.isMuted).labelsHidden().tint(.orange)
+            }
+            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
+            
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Timer Notifications").font(.headline).foregroundColor(.white)
+                    Text("Notify when timer completes").font(.caption).foregroundColor(.white.opacity(0.6))
+                }
+                Spacer()
+                Toggle("", isOn: $settings.timerNotificationsEnabled).labelsHidden().tint(.orange)
             }
             .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
         }
@@ -2520,7 +2540,7 @@ struct TimerScreen: View {
     
     func scheduleTimerEndNotification() {
         cancelScheduledNotifications()
-        guard secondsLeft > 0 else { return }
+        guard settings.timerNotificationsEnabled, secondsLeft > 0 else { return }
         
         let content = UNMutableNotificationContent()
         content.title = isStudy ? "Lock In Time Complete!" : "Chill Time Complete!"
@@ -2533,6 +2553,8 @@ struct TimerScreen: View {
     }
     
     func scheduleCompletionNotification() {
+        guard settings.timerNotificationsEnabled else { return }
+        
         let content = UNMutableNotificationContent()
         content.title = isStudy ? "Lock In Time Done!" : "Chill Time Done!"
         content.body = isStudy ? "Time to rest!" : "Time to study!"

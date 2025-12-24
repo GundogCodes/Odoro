@@ -154,11 +154,13 @@ struct Habit: Identifiable, Codable {
     var currentValue: Int
     var cycleCount: Int
     var manuallyFilledCells: Set<Int>
+    var lastResetDate: Date?            // For auto-tracking: when progress was last reset
     
     // Notes & Completion
     var notes: [HabitNote]
     var isCompleted: Bool
     var completedAt: Date?
+    var goalNotificationSent: Bool?     // Whether goal reached notification was sent (optional for backwards compatibility)
     
     // Display settings
     var timeUnit: HabitTimeUnit
@@ -208,16 +210,17 @@ struct Habit: Identifiable, Codable {
         }
         let calendar = Calendar.current
         let now = Date()
+        let referenceDate = lastResetDate ?? startDate
         switch cellUnit {
         case .day:
-            return max(0, calendar.dateComponents([.day], from: startDate, to: now).day ?? 0)
+            return max(0, calendar.dateComponents([.day], from: referenceDate, to: now).day ?? 0)
         case .week:
-            let days = calendar.dateComponents([.day], from: startDate, to: now).day ?? 0
+            let days = calendar.dateComponents([.day], from: referenceDate, to: now).day ?? 0
             return max(0, days / 7)
         case .month:
-            return max(0, calendar.dateComponents([.month], from: startDate, to: now).month ?? 0)
+            return max(0, calendar.dateComponents([.month], from: referenceDate, to: now).month ?? 0)
         case .year:
-            return max(0, calendar.dateComponents([.year], from: startDate, to: now).year ?? 0)
+            return max(0, calendar.dateComponents([.year], from: referenceDate, to: now).year ?? 0)
         }
     }
     
@@ -255,6 +258,26 @@ struct Habit: Identifiable, Codable {
         let filledInCurrentPage = max(0, min(elapsedInCurrentPage, cellsInCurrentPage))
         
         return (currentPage, totalPages, cellsInCurrentPage, filledInCurrentPage)
+    }
+    
+    // Goal cell index within current page (nil for indefinite duration)
+    var goalCellIndexInCurrentPage: Int? {
+        // No goal cell for indefinite duration
+        guard durationType != .indefinite else { return nil }
+        
+        let pageInfo = gridPageInfo
+        
+        // Goal cell only appears on the last page
+        guard pageInfo.currentPage == pageInfo.totalPages - 1 else { return nil }
+        
+        // Goal cell is the last cell in the current page
+        return pageInfo.cellsInCurrentPage - 1
+    }
+    
+    // Whether the habit goal has been reached
+    var isGoalReached: Bool {
+        guard durationType != .indefinite else { return false }
+        return elapsedCells >= totalDurationCells
     }
     
     var totalCells: Int {

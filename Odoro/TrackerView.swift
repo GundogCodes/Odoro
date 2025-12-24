@@ -1,5 +1,6 @@
 import SwiftUI
 internal import Combine
+import UserNotifications
 
 // MARK: - Habit Model
 enum HabitType: String, Codable, CaseIterable {
@@ -147,11 +148,13 @@ struct Habit: Identifiable, Codable {
     var currentValue: Int               // Current progress (cells filled for manual)
     var cycleCount: Int                 // How many times grid has cycled (for indefinite)
     var manuallyFilledCells: Set<Int>   // Which specific cells are filled (for manual tracking)
+    var lastResetDate: Date?            // For auto-tracking: when progress was last reset
     
     // Notes & Completion
     var notes: [HabitNote]              // User's timestamped notes/journal entries
     var isCompleted: Bool               // Whether the habit goal is completed
     var completedAt: Date?              // When the habit was marked complete
+    var goalNotificationSent: Bool      // Whether goal reached notification was sent
     
     // Display settings
     var timeUnit: HabitTimeUnit         // Display unit for text counter
@@ -198,6 +201,7 @@ struct Habit: Identifiable, Codable {
         self.notes = []
         self.isCompleted = false
         self.completedAt = nil
+        self.goalNotificationSent = false
         self.timeUnit = timeUnit
         self.color = color
         self.createdAt = Date()
@@ -281,6 +285,26 @@ struct Habit: Identifiable, Codable {
         return (currentPage, totalPages, cellsInCurrentPage, filledInCurrentPage)
     }
     
+    // Goal cell index within current page (nil for indefinite duration)
+    var goalCellIndexInCurrentPage: Int? {
+        // No goal cell for indefinite duration
+        guard durationType != .indefinite else { return nil }
+        
+        let pageInfo = gridPageInfo
+        
+        // Goal cell only appears on the last page
+        guard pageInfo.currentPage == pageInfo.totalPages - 1 else { return nil }
+        
+        // Goal cell is the last cell in the current page
+        return pageInfo.cellsInCurrentPage - 1
+    }
+    
+    // Whether the habit goal has been reached
+    var isGoalReached: Bool {
+        guard durationType != .indefinite else { return false }
+        return elapsedCells >= totalDurationCells
+    }
+    
     // Elapsed cells (time passed)
     var elapsedCells: Int {
         if updateMode == .manual {
@@ -289,17 +313,18 @@ struct Habit: Identifiable, Codable {
         
         let calendar = Calendar.current
         let now = Date()
+        let referenceDate = lastResetDate ?? startDate
         
         switch cellUnit {
         case .day:
-            return max(0, calendar.dateComponents([.day], from: startDate, to: now).day ?? 0)
+            return max(0, calendar.dateComponents([.day], from: referenceDate, to: now).day ?? 0)
         case .week:
-            let days = calendar.dateComponents([.day], from: startDate, to: now).day ?? 0
+            let days = calendar.dateComponents([.day], from: referenceDate, to: now).day ?? 0
             return max(0, days / 7)
         case .month:
-            return max(0, calendar.dateComponents([.month], from: startDate, to: now).month ?? 0)
+            return max(0, calendar.dateComponents([.month], from: referenceDate, to: now).month ?? 0)
         case .year:
-            return max(0, calendar.dateComponents([.year], from: startDate, to: now).year ?? 0)
+            return max(0, calendar.dateComponents([.year], from: referenceDate, to: now).year ?? 0)
         }
     }
     
@@ -453,7 +478,7 @@ class HabitManager: ObservableObject {
     
     init() {
         load()
-        debugWidgetSync() 
+        debugWidgetSync()
     }
     func debugWidgetSync() {
         print("🔍 DEBUG: Checking App Group...")
@@ -485,7 +510,7 @@ class HabitManager: ObservableObject {
         if let encoded = try? JSONEncoder().encode(habits) {
             UserDefaults.standard.set(encoded, forKey: saveKey)
         }
-        syncToWidget() 
+        syncToWidget()
     }
     
     func load() {
@@ -567,7 +592,49 @@ class HabitManager: ObservableObject {
             h.currentValue = 0
             h.cycleCount = 0
             h.manuallyFilledCells.removeAll()
+            h.lastResetDate = Date()  // Reset point for auto-tracking
+            h.goalNotificationSent = false  // Allow notification for new goal
             updateHabit(h)
+        }
+    }
+    
+    // Check all habits and send notifications for newly reached goals
+    func checkAndSendGoalNotifications() {
+        for habit in habits {
+            // Skip if already notified, completed, or indefinite
+            guard !habit.goalNotificationSent,
+                  !habit.isCompleted,
+                  habit.durationType != .indefinite,
+                  habit.isGoalReached else { continue }
+            
+            // Send notification
+            sendGoalReachedNotification(for: habit)
+            
+            // Mark as notified
+            if var h = habits.first(where: { $0.id == habit.id }) {
+                h.goalNotificationSent = true
+                updateHabit(h)
+            }
+        }
+    }
+    
+    private func sendGoalReachedNotification(for habit: Habit) {
+        let content = UNMutableNotificationContent()
+        content.title = "🎉 Goal Reached!"
+        content.body = "You've completed your \"\(habit.name)\" goal!"
+        content.sound = .default
+        
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.5, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "goal_reached_\(habit.id.uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Error sending goal notification: \(error)")
+            }
         }
     }
     
@@ -803,7 +870,8 @@ struct ContributionGridView: View {
                 isCountdown: habit.type == .countdown,
                 isManualMode: habit.updateMode == .manual,
                 manuallyFilledCells: habit.manuallyFilledCells,
-                currentCellIndex: habit.currentCellIndex
+                currentCellIndex: habit.currentCellIndex,
+                goalCellIndex: habit.goalCellIndexInCurrentPage
             )
         }
         .padding(12)
@@ -880,6 +948,18 @@ struct GridContent: View {
     let isManualMode: Bool
     let manuallyFilledCells: Set<Int>
     let currentCellIndex: Int  // Today's cell index
+    let goalCellIndex: Int?    // Index of the goal cell (nil for indefinite)
+    
+    // Beautiful gold color for goal cell
+    private let goldColor = Color(red: 1.0, green: 0.84, blue: 0.0)
+    private let goldGradient = LinearGradient(
+        colors: [
+            Color(red: 1.0, green: 0.9, blue: 0.4),
+            Color(red: 1.0, green: 0.75, blue: 0.0)
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
     
     var body: some View {
         GeometryReader { geo in
@@ -892,6 +972,7 @@ struct GridContent: View {
             // Calculate cell size to fill available space (cells stretch to fill)
             let cellWidth = (availableWidth - totalHSpacing) / CGFloat(columns)
             let cellHeight = (availableHeight - totalVSpacing) / CGFloat(rows)
+            let cornerRadius = min(cellWidth, cellHeight) * 0.15
             
             VStack(spacing: spacing) {
                 ForEach(Array(0..<rows), id: \.self) { row in
@@ -900,9 +981,20 @@ struct GridContent: View {
                             let cellIndex = (row * columns) + col
                             
                             if cellIndex < totalCells {
-                                RoundedRectangle(cornerRadius: min(cellWidth, cellHeight) * 0.15)
-                                    .fill(cellColor(at: cellIndex))
-                                    .frame(width: cellWidth, height: cellHeight)
+                                // Check if this is the goal cell
+                                if cellIndex == goalCellIndex {
+                                    // Goal cell - special gold styling
+                                    goalCellView(
+                                        isFilled: isCellFilled(at: cellIndex),
+                                        cornerRadius: cornerRadius,
+                                        width: cellWidth,
+                                        height: cellHeight
+                                    )
+                                } else {
+                                    RoundedRectangle(cornerRadius: cornerRadius)
+                                        .fill(cellColor(at: cellIndex))
+                                        .frame(width: cellWidth, height: cellHeight)
+                                }
                             } else {
                                 // Empty placeholder for alignment
                                 Color.clear
@@ -912,6 +1004,30 @@ struct GridContent: View {
                     }
                 }
             }
+        }
+    }
+    
+    @ViewBuilder
+    private func goalCellView(isFilled: Bool, cornerRadius: CGFloat, width: CGFloat, height: CGFloat) -> some View {
+        if isFilled {
+            // Solid gold with subtle shimmer gradient
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(goldGradient)
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                )
+                .shadow(color: goldColor.opacity(0.5), radius: 3, x: 0, y: 0)
+                .frame(width: width, height: height)
+        } else {
+            // Gold outline when unfilled
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(Color.white.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(goldGradient, lineWidth: 2)
+                )
+                .frame(width: width, height: height)
         }
     }
     
@@ -941,6 +1057,10 @@ struct GridContent: View {
     }
     
     private func isCellFilled(at index: Int) -> Bool {
+        if isManualMode {
+            return manuallyFilledCells.contains(index)
+        }
+        
         if isCountdown {
             // Countdown: fill from end, empty from start
             let emptyCount = totalCells - filledCells
@@ -3057,6 +3177,9 @@ struct TrackerView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { showLockInButton = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { showStatsCard = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { showHabitsSection = true }
+            
+            // Check for any habits that have reached their goals
+            habitManager.checkAndSendGoalNotifications()
         }
     }
 }

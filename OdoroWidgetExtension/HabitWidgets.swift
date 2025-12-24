@@ -110,6 +110,17 @@ struct WidgetGridView: View {
         colorScheme == .dark ? .white : .primary
     }
     
+    // Gold colors for goal cell
+    private let goldColor = Color(red: 1.0, green: 0.84, blue: 0.0)
+    private let goldGradient = LinearGradient(
+        colors: [
+            Color(red: 1.0, green: 0.9, blue: 0.4),
+            Color(red: 1.0, green: 0.75, blue: 0.0)
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+    
     private var filledCellsForDisplay: Int {
         if habit.updateMode == .manual {
             return habit.manuallyFilledCells.count
@@ -169,6 +180,7 @@ struct WidgetGridView: View {
                 let totalVSpacing = spacing * CGFloat(rows - 1)
                 let cellWidth = (geo.size.width - totalHSpacing) / CGFloat(cols)
                 let cellHeight = (geo.size.height - totalVSpacing) / CGFloat(rows)
+                let cornerRadius = min(cellWidth, cellHeight) * 0.15
                 
                 VStack(spacing: spacing) {
                     ForEach(0..<rows, id: \.self) { row in
@@ -177,9 +189,19 @@ struct WidgetGridView: View {
                                 let cellIndex = (row * cols) + col
                                 
                                 if cellIndex < habit.totalCells {
-                                    RoundedRectangle(cornerRadius: min(cellWidth, cellHeight) * 0.15)
-                                        .fill(cellColor(at: cellIndex))
-                                        .frame(width: cellWidth, height: cellHeight)
+                                    // Check if this is the goal cell
+                                    if cellIndex == habit.goalCellIndexInCurrentPage {
+                                        goalCellView(
+                                            isFilled: isCellFilled(at: cellIndex),
+                                            cornerRadius: cornerRadius,
+                                            width: cellWidth,
+                                            height: cellHeight
+                                        )
+                                    } else {
+                                        RoundedRectangle(cornerRadius: cornerRadius)
+                                            .fill(cellColor(at: cellIndex))
+                                            .frame(width: cellWidth, height: cellHeight)
+                                    }
                                 }
                             }
                         }
@@ -188,6 +210,30 @@ struct WidgetGridView: View {
             }
         }
         .padding(12)
+    }
+    
+    @ViewBuilder
+    private func goalCellView(isFilled: Bool, cornerRadius: CGFloat, width: CGFloat, height: CGFloat) -> some View {
+        if isFilled {
+            // Solid gold with subtle shimmer gradient
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(goldGradient)
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(Color.white.opacity(0.5), lineWidth: 1)
+                )
+                .shadow(color: goldColor.opacity(0.5), radius: 2, x: 0, y: 0)
+                .frame(width: width, height: height)
+        } else {
+            // Gold outline when unfilled
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .stroke(goldGradient, lineWidth: 1.5)
+                )
+                .frame(width: width, height: height)
+        }
     }
     
     private func cellColor(at index: Int) -> Color {
@@ -199,8 +245,21 @@ struct WidgetGridView: View {
             }
             return emptyColor
         } else {
-            let isFilled = index < filledCellsForDisplay
+            let isFilled = isCellFilled(at: index)
             return isFilled ? habit.color.color : emptyColor
+        }
+    }
+    
+    private func isCellFilled(at index: Int) -> Bool {
+        if habit.updateMode == .manual {
+            return habit.manuallyFilledCells.contains(index)
+        }
+        
+        if habit.type == .countdown {
+            let emptyCount = habit.totalCells - filledCellsForDisplay
+            return index >= emptyCount && index < habit.totalCells
+        } else {
+            return index < filledCellsForDisplay
         }
     }
 }
