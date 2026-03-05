@@ -160,7 +160,7 @@ struct Habit: Identifiable, Codable {
     var notes: [HabitNote]
     var isCompleted: Bool
     var completedAt: Date?
-    var goalNotificationSent: Bool?     // Whether goal reached notification was sent (optional for backwards compatibility)
+    var goalNotificationSent: Bool      // Whether goal reached notification was sent
     
     // Display settings
     var timeUnit: HabitTimeUnit
@@ -170,6 +170,7 @@ struct Habit: Identifiable, Codable {
     
     // Computed property (same as main app)
     var startDate: Date { createdAt }
+    var referenceDate: Date { lastResetDate ?? createdAt }
     
     // MARK: - Computed Properties for Widget Display
     
@@ -315,6 +316,25 @@ struct Habit: Identifiable, Codable {
     
     func filledCells(at date: Date = Date()) -> Int {
         return gridPageInfo.filledInCurrentPage
+    }
+
+    // Unified display calculation - matches main app
+    func filledCellsForDisplay() -> Int {
+        if updateMode == .manual {
+            let pageInfo = gridPageInfo
+            let pageStart = pageInfo.currentPage * maxCellCapacity
+            let pageEnd = pageStart + pageInfo.cellsInCurrentPage
+            let cellsOnPage = manuallyFilledCells.filter { $0 >= pageStart && $0 < pageEnd }.count
+            if type == .countdown {
+                return max(0, pageInfo.cellsInCurrentPage - cellsOnPage)
+            }
+            return cellsOnPage
+        }
+        let filled = filledCells()
+        if type == .countdown {
+            return max(0, totalCells - filled)
+        }
+        return filled
     }
 }
 

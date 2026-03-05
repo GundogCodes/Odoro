@@ -1977,6 +1977,83 @@ struct LiquidGlassSelector: View {
     }
 }
 
+// MARK: - Battery Saver Wave View (stroke only, no fill)
+struct BatterySaverWaveView: View {
+    let progress: CGFloat
+    let waveColor: Color
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1/15)) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+
+            Canvas { context, size in
+                let fillWidth = size.width * progress
+
+                // Build the wave path (matches FluidShape logic but as a standalone path)
+                var path = Path()
+                let steps = 50
+                let stepHeight = size.height / CGFloat(steps)
+                let waveOffset = CGFloat(time * 1.0)
+                let waveHeight: CGFloat = 8
+
+                for i in 0...steps {
+                    let y = CGFloat(i) * stepHeight
+                    let normalizedY = y / size.height
+
+                    let wave1 = sin(normalizedY * .pi * 2 + waveOffset) * waveHeight
+                    let wave2 = sin(normalizedY * .pi * 4 + waveOffset * 1.5) * (waveHeight * 0.3)
+                    let wave3 = sin(normalizedY * .pi * 6 + waveOffset * 0.7) * (waveHeight * 0.15)
+
+                    let totalWave = wave1 + wave2 + wave3
+                    let x = fillWidth + totalWave
+
+                    if i == 0 {
+                        path.move(to: CGPoint(x: max(0, x), y: y))
+                    } else {
+                        path.addLine(to: CGPoint(x: max(0, x), y: y))
+                    }
+                }
+
+                context.stroke(
+                    path,
+                    with: .color(waveColor),
+                    lineWidth: 2.5
+                )
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+// MARK: - Quick Adjust Button for Timer
+struct QuickAdjustButton: View {
+    let minutes: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: {
+            let impact = UIImpactFeedbackGenerator(style: .light)
+            impact.impactOccurred()
+            action()
+        }) {
+            Text("\(minutes > 0 ? "+" : "")\(minutes)")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .frame(width: 44, height: 44)
+                .background(
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Circle()
+                                .stroke(.white.opacity(0.3), lineWidth: 1)
+                        )
+                )
+                .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
 // MARK: - Timer Screen
 struct TimerScreen: View {
     @Binding var studyTime: Int
@@ -2048,6 +2125,13 @@ struct TimerScreen: View {
             ZStack {
                 if batterySaverMode {
                     Color.black.ignoresSafeArea()
+                    // Show wave boundary line in battery saver mode
+                    BatterySaverWaveView(
+                        progress: progress,
+                        waveColor: isStudy
+                            ? settings.studyColor.opacity(0.7)
+                            : settings.restColor.opacity(0.7)
+                    )
                 } else {
                     (isStudy ? settings.studyBackgroundColor : settings.restBackgroundColor).ignoresSafeArea()
                     FluidFillView(progress: progress, gradient: isStudy ? studyGradient : restGradient, motionManager: motionManager, isAnimating: timerRunning)
@@ -2068,7 +2152,7 @@ struct TimerScreen: View {
                     Text(timeString(from: secondsLeft))
                         .font(.system(size: batterySaverMode ? 90 : 70, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
-                    
+
                     if showUI && !batterySaverMode {
                         HStack(spacing: 16) {
                             Button { toggleTimer() } label: {
@@ -2078,7 +2162,7 @@ struct TimerScreen: View {
                                 }.foregroundColor(.white)
                             }
                             .buttonStyle(GlassButtonStyle(isActive: timerRunning, activeColor: .green))
-                            
+
                             Button { resetTimer() } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "arrow.counterclockwise")
@@ -2086,7 +2170,7 @@ struct TimerScreen: View {
                                 }.foregroundColor(.white)
                             }
                             .buttonStyle(GlassButtonStyle())
-                            
+
                             Button { toggleTimelapse() } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: cameraManager.isRecording ? "video.fill" : "video")
@@ -2097,7 +2181,21 @@ struct TimerScreen: View {
                         }
                         .transition(.opacity)
                     }
-                    
+
+                    // Quick-adjust buttons (only when timer is running, also in battery saver)
+                    if showUI && timerRunning {
+                        HStack(spacing: 6) {
+                            QuickAdjustButton(minutes: -10) { adjustTimerDuration(by: -10) }
+                            QuickAdjustButton(minutes: -5) { adjustTimerDuration(by: -5) }
+
+                            Spacer().frame(width: 20)
+
+                            QuickAdjustButton(minutes: 5) { adjustTimerDuration(by: 5) }
+                            QuickAdjustButton(minutes: 10) { adjustTimerDuration(by: 10) }
+                        }
+                        .transition(.opacity)
+                    }
+
                     if showUI && !batterySaverMode && soundManager.currentSound != nil && soundManager.isPlaying {
                         HStack(spacing: 6) {
                             Image(systemName: "speaker.wave.2.fill")
@@ -2400,7 +2498,37 @@ struct TimerScreen: View {
                                               totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         }
     }
-    
+
+    func adjustTimerDuration(by minutes: Int) {
+        let adjustSeconds = minutes * 60
+        let newSecondsLeft = max(60, secondsLeft + adjustSeconds)
+        secondsLeft = newSecondsLeft
+
+        // Update the bound study/rest time
+        if isStudy {
+            studyTime = max(1, (newSecondsLeft + 59) / 60) // Round up to nearest minute
+        } else if !isLongBreak {
+            restTime = max(1, (newSecondsLeft + 59) / 60)
+        }
+
+        // If timer is running, update the end time
+        if timerRunning {
+            timerEndTime = Date().addingTimeInterval(TimeInterval(newSecondsLeft))
+            cancelScheduledNotifications()
+            scheduleTimerEndNotification()
+
+            // Update live activity
+            if let startTime = timerStartTime, let endTime = timerEndTime {
+                liveActivityManager.updateActivity(
+                    startTime: startTime, endTime: endTime,
+                    isStudy: isStudy, isPaused: false,
+                    sessionNumber: consecutiveSessions + 1,
+                    totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4
+                )
+            }
+        }
+    }
+
     func resetTimer() {
         timerRunning = false
         isStudy = true

@@ -32,8 +32,10 @@ struct HabitWidgetProvider: AppIntentTimelineProvider {
     func timeline(for configuration: SelectHabitIntent, in context: Context) async -> Timeline<HabitWidgetEntry> {
         let habit = getHabit(for: configuration)
         let entry = HabitWidgetEntry(date: Date(), habit: habit)
-        
-        let nextUpdate = Calendar.current.date(byAdding: .minute, value: 30, to: Date()) ?? Date()
+
+        // Shorter refresh for auto-tracked habits (5 min), longer for manual (15 min)
+        let minuteInterval = (habit?.updateMode == .manual) ? 15 : 5
+        let nextUpdate = Calendar.current.date(byAdding: .minute, value: minuteInterval, to: Date()) ?? Date()
         return Timeline(entries: [entry], policy: .after(nextUpdate))
     }
     
@@ -122,14 +124,7 @@ struct WidgetGridView: View {
     )
     
     private var filledCellsForDisplay: Int {
-        if habit.updateMode == .manual {
-            return habit.manuallyFilledCells.count
-        }
-        let filled = habit.filledCells()
-        if habit.type == .countdown {
-            return max(0, habit.totalCells - filled)
-        }
-        return filled
+        return habit.filledCellsForDisplay()
     }
     
     private var progressLabel: String {
@@ -236,11 +231,15 @@ struct WidgetGridView: View {
         }
     }
     
+    private var pageOffset: Int {
+        habit.gridPageInfo.currentPage * habit.maxCellCapacity
+    }
+
     private func cellColor(at index: Int) -> Color {
         let emptyColor = colorScheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.1)
-        
+
         if habit.updateMode == .manual {
-            if habit.manuallyFilledCells.contains(index) {
+            if habit.manuallyFilledCells.contains(pageOffset + index) {
                 return habit.color.color
             }
             return emptyColor
@@ -249,12 +248,12 @@ struct WidgetGridView: View {
             return isFilled ? habit.color.color : emptyColor
         }
     }
-    
+
     private func isCellFilled(at index: Int) -> Bool {
         if habit.updateMode == .manual {
-            return habit.manuallyFilledCells.contains(index)
+            return habit.manuallyFilledCells.contains(pageOffset + index)
         }
-        
+
         if habit.type == .countdown {
             let emptyCount = habit.totalCells - filledCellsForDisplay
             return index >= emptyCount && index < habit.totalCells
@@ -283,29 +282,29 @@ struct WidgetTextCounterView: View {
         let duration = habit.textCounterDuration
         
         switch habit.timeUnit {
-        case .seconds: return calendar.date(byAdding: .second, value: duration, to: habit.startDate) ?? habit.startDate
-        case .minutes: return calendar.date(byAdding: .minute, value: duration, to: habit.startDate) ?? habit.startDate
-        case .hours: return calendar.date(byAdding: .hour, value: duration, to: habit.startDate) ?? habit.startDate
-        case .days: return calendar.date(byAdding: .day, value: duration, to: habit.startDate) ?? habit.startDate
-        case .weeks: return calendar.date(byAdding: .weekOfYear, value: duration, to: habit.startDate) ?? habit.startDate
-        case .months: return calendar.date(byAdding: .month, value: duration, to: habit.startDate) ?? habit.startDate
-        case .years: return calendar.date(byAdding: .year, value: duration, to: habit.startDate) ?? habit.startDate
+        case .seconds: return calendar.date(byAdding: .second, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .minutes: return calendar.date(byAdding: .minute, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .hours: return calendar.date(byAdding: .hour, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .days: return calendar.date(byAdding: .day, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .weeks: return calendar.date(byAdding: .weekOfYear, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .months: return calendar.date(byAdding: .month, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .years: return calendar.date(byAdding: .year, value: duration, to: habit.referenceDate) ?? habit.referenceDate
         }
     }
-    
+
     private var timeInterval: TimeInterval {
         let now = Date()
         if habit.type == .countdown {
             return calculatedTargetDate.timeIntervalSince(now)
         } else {
-            return now.timeIntervalSince(habit.startDate)
+            return now.timeIntervalSince(habit.referenceDate)
         }
     }
-    
+
     private var progressToTarget: CGFloat {
-        let totalInterval = calculatedTargetDate.timeIntervalSince(habit.startDate)
+        let totalInterval = calculatedTargetDate.timeIntervalSince(habit.referenceDate)
         guard totalInterval > 0 else { return 0 }
-        let elapsed = Date().timeIntervalSince(habit.startDate)
+        let elapsed = Date().timeIntervalSince(habit.referenceDate)
         let progress = CGFloat(min(max(elapsed / totalInterval, 0), 1))
         return habit.type == .countdown ? 1.0 - progress : progress
     }
@@ -451,30 +450,30 @@ struct WidgetTimelineBarView: View {
         let duration = habit.timelineDuration
         
         switch habit.timelineTickUnit {
-        case .minute: return calendar.date(byAdding: .minute, value: duration, to: habit.startDate) ?? habit.startDate
-        case .hour: return calendar.date(byAdding: .hour, value: duration, to: habit.startDate) ?? habit.startDate
-        case .day: return calendar.date(byAdding: .day, value: duration, to: habit.startDate) ?? habit.startDate
-        case .week: return calendar.date(byAdding: .weekOfYear, value: duration, to: habit.startDate) ?? habit.startDate
-        case .month: return calendar.date(byAdding: .month, value: duration, to: habit.startDate) ?? habit.startDate
-        case .year: return calendar.date(byAdding: .year, value: duration, to: habit.startDate) ?? habit.startDate
+        case .minute: return calendar.date(byAdding: .minute, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .hour: return calendar.date(byAdding: .hour, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .day: return calendar.date(byAdding: .day, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .week: return calendar.date(byAdding: .weekOfYear, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .month: return calendar.date(byAdding: .month, value: duration, to: habit.referenceDate) ?? habit.referenceDate
+        case .year: return calendar.date(byAdding: .year, value: duration, to: habit.referenceDate) ?? habit.referenceDate
         }
     }
-    
+
     private var totalTicks: Int { habit.timelineDuration }
-    
+
     private var elapsedTicks: Int {
         let calendar = Calendar.current
         let now = Date()
         var ticks: Int
         switch habit.timelineTickUnit {
-        case .minute: ticks = calendar.dateComponents([.minute], from: habit.startDate, to: now).minute ?? 0
-        case .hour: ticks = calendar.dateComponents([.hour], from: habit.startDate, to: now).hour ?? 0
-        case .day: ticks = calendar.dateComponents([.day], from: habit.startDate, to: now).day ?? 0
+        case .minute: ticks = calendar.dateComponents([.minute], from: habit.referenceDate, to: now).minute ?? 0
+        case .hour: ticks = calendar.dateComponents([.hour], from: habit.referenceDate, to: now).hour ?? 0
+        case .day: ticks = calendar.dateComponents([.day], from: habit.referenceDate, to: now).day ?? 0
         case .week:
-            let days = calendar.dateComponents([.day], from: habit.startDate, to: now).day ?? 0
+            let days = calendar.dateComponents([.day], from: habit.referenceDate, to: now).day ?? 0
             ticks = days / 7
-        case .month: ticks = calendar.dateComponents([.month], from: habit.startDate, to: now).month ?? 0
-        case .year: ticks = calendar.dateComponents([.year], from: habit.startDate, to: now).year ?? 0
+        case .month: ticks = calendar.dateComponents([.month], from: habit.referenceDate, to: now).month ?? 0
+        case .year: ticks = calendar.dateComponents([.year], from: habit.referenceDate, to: now).year ?? 0
         }
         return max(0, min(ticks, totalTicks))
     }
@@ -619,7 +618,7 @@ struct WidgetTimelineBarView: View {
             // Tick labels (not on small)
             if !isSmall {
                 HStack {
-                    Text(habit.startDate.formatted(.dateTime.month(.abbreviated).day()))
+                    Text(habit.referenceDate.formatted(.dateTime.month(.abbreviated).day()))
                         .font(.caption2)
                         .foregroundColor(textColor.opacity(0.5))
                     Spacer()
