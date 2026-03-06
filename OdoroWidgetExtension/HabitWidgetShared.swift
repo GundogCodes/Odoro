@@ -96,7 +96,8 @@ enum GridDurationType: String, Codable, CaseIterable {
 
 enum HabitColor: String, Codable, CaseIterable {
     case blue, green, purple, orange, red, pink, teal, yellow
-    
+    case indigo, mint, cyan, brown, coral, lavender, lime, gold
+
     var color: Color {
         switch self {
         case .blue: return .blue
@@ -107,9 +108,17 @@ enum HabitColor: String, Codable, CaseIterable {
         case .pink: return .pink
         case .teal: return .teal
         case .yellow: return .yellow
+        case .indigo: return .indigo
+        case .mint: return .mint
+        case .cyan: return .cyan
+        case .brown: return .brown
+        case .coral: return Color(red: 1.0, green: 0.5, blue: 0.44)
+        case .lavender: return Color(red: 0.69, green: 0.61, blue: 0.85)
+        case .lime: return Color(red: 0.55, green: 0.82, blue: 0.15)
+        case .gold: return Color(red: 1.0, green: 0.84, blue: 0.0)
         }
     }
-    
+
     var gradient: LinearGradient {
         switch self {
         case .blue: return LinearGradient(colors: [.blue, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -120,6 +129,14 @@ enum HabitColor: String, Codable, CaseIterable {
         case .pink: return LinearGradient(colors: [.pink, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
         case .teal: return LinearGradient(colors: [.teal, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
         case .yellow: return LinearGradient(colors: [.yellow, .orange], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .indigo: return LinearGradient(colors: [.indigo, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .mint: return LinearGradient(colors: [.mint, .green], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .cyan: return LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .brown: return LinearGradient(colors: [.brown, .orange], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .coral: return LinearGradient(colors: [Color(red: 1.0, green: 0.5, blue: 0.44), .pink], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .lavender: return LinearGradient(colors: [Color(red: 0.69, green: 0.61, blue: 0.85), .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .lime: return LinearGradient(colors: [Color(red: 0.55, green: 0.82, blue: 0.15), .green], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .gold: return LinearGradient(colors: [Color(red: 1.0, green: 0.84, blue: 0.0), .orange], startPoint: .topLeading, endPoint: .bottomTrailing)
         }
     }
 }
@@ -132,6 +149,7 @@ struct HabitNote: Identifiable, Codable {
 }
 
 // MARK: - Habit (MUST match main app exactly - same property order)
+// Uses custom init(from:) with defaults so new properties in the main app won't break widget decoding
 struct Habit: Identifiable, Codable {
     var id: UUID
     var name: String
@@ -140,7 +158,7 @@ struct Habit: Identifiable, Codable {
     var updateMode: HabitUpdateMode
     var visualStyle: HabitVisualStyle
     var widgetSize: HabitWidgetSize
-    
+
     // Grid settings
     var cellUnit: CellUnit
     var durationType: GridDurationType
@@ -149,28 +167,60 @@ struct Habit: Identifiable, Codable {
     var textCounterDuration: Int
     var timelineTickUnit: TimelineTickUnit
     var timelineDuration: Int
-    
+
     // Progress tracking
     var currentValue: Int
     var cycleCount: Int
     var manuallyFilledCells: Set<Int>
     var lastResetDate: Date?            // For auto-tracking: when progress was last reset
-    
+
     // Notes & Completion
     var notes: [HabitNote]
     var isCompleted: Bool
     var completedAt: Date?
     var goalNotificationSent: Bool      // Whether goal reached notification was sent
-    
+
     // Display settings
     var timeUnit: HabitTimeUnit
     var color: HabitColor
-    
+
     var createdAt: Date
-    
+
     // Computed property (same as main app)
     var startDate: Date { createdAt }
     var referenceDate: Date { lastResetDate ?? createdAt }
+
+    // MARK: - Resilient Decoding
+    // Decodes with defaults for any missing keys so the widget doesn't break
+    // when the main app adds new properties before the widget is updated
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? "target"
+        type = try container.decodeIfPresent(HabitType.self, forKey: .type) ?? .countUp
+        updateMode = try container.decodeIfPresent(HabitUpdateMode.self, forKey: .updateMode) ?? .auto
+        visualStyle = try container.decodeIfPresent(HabitVisualStyle.self, forKey: .visualStyle) ?? .grid
+        widgetSize = try container.decodeIfPresent(HabitWidgetSize.self, forKey: .widgetSize) ?? .fullMedium
+        cellUnit = try container.decodeIfPresent(CellUnit.self, forKey: .cellUnit) ?? .day
+        durationType = try container.decodeIfPresent(GridDurationType.self, forKey: .durationType) ?? .customRange
+        customDuration = try container.decodeIfPresent(Int.self, forKey: .customDuration) ?? 30
+        targetDate = try container.decodeIfPresent(Date.self, forKey: .targetDate)
+        textCounterDuration = try container.decodeIfPresent(Int.self, forKey: .textCounterDuration) ?? 30
+        timelineTickUnit = try container.decodeIfPresent(TimelineTickUnit.self, forKey: .timelineTickUnit) ?? .day
+        timelineDuration = try container.decodeIfPresent(Int.self, forKey: .timelineDuration) ?? 30
+        currentValue = try container.decodeIfPresent(Int.self, forKey: .currentValue) ?? 0
+        cycleCount = try container.decodeIfPresent(Int.self, forKey: .cycleCount) ?? 0
+        manuallyFilledCells = try container.decodeIfPresent(Set<Int>.self, forKey: .manuallyFilledCells) ?? []
+        lastResetDate = try container.decodeIfPresent(Date.self, forKey: .lastResetDate)
+        notes = try container.decodeIfPresent([HabitNote].self, forKey: .notes) ?? []
+        isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
+        completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        goalNotificationSent = try container.decodeIfPresent(Bool.self, forKey: .goalNotificationSent) ?? false
+        timeUnit = try container.decodeIfPresent(HabitTimeUnit.self, forKey: .timeUnit) ?? .days
+        color = try container.decodeIfPresent(HabitColor.self, forKey: .color) ?? .blue
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
     
     // MARK: - Computed Properties for Widget Display
     

@@ -2077,6 +2077,7 @@ struct TimerScreen: View {
     @State private var timerStartTime: Date?
     @State private var timerEndTime: Date?
     @State private var backgroundTime: Date?
+    @State private var isTransitioningPhase = false
     @State private var audioPlayer: AVAudioPlayer?
     
     @StateObject private var cameraManager = CameraManager()
@@ -2110,7 +2111,10 @@ struct TimerScreen: View {
         else { return restTime * 60 }
     }
     
-    var progress: CGFloat { CGFloat(totalSeconds - secondsLeft) / CGFloat(totalSeconds) }
+    var progress: CGFloat {
+        guard totalSeconds > 0 else { return 0 }
+        return min(max(CGFloat(totalSeconds - secondsLeft) / CGFloat(totalSeconds), 0), 1)
+    }
     
     var studyGradient: LinearGradient {
         LinearGradient(colors: [settings.studyColor.opacity(0.7), settings.studyColor], startPoint: .leading, endPoint: .trailing)
@@ -2292,7 +2296,7 @@ struct TimerScreen: View {
             restoreTimerStateIfNeeded()
         }
         .onReceive(timer) { _ in
-            guard timerRunning, let endTime = timerEndTime else { return }
+            guard timerRunning, !isTransitioningPhase, let endTime = timerEndTime else { return }
             
             let remaining = Int(endTime.timeIntervalSince(Date()))
             
@@ -2427,8 +2431,11 @@ struct TimerScreen: View {
             let savedStudyTime = state.studyTime > 0 ? state.studyTime : studyTime
             let savedRestTime = state.restTime > 0 ? state.restTime : restTime
             
-            // Calculate how many phases have completed
-            while currentEndTime.timeIntervalSince(Date()) <= 0 {
+            // Calculate how many phases have completed (cap at 500 to prevent freeze if app was killed for very long)
+            var iterations = 0
+            let maxIterations = 500
+            while currentEndTime.timeIntervalSince(Date()) <= 0 && iterations < maxIterations {
+                iterations += 1
                 if currentIsStudy {
                     currentConsecutiveSessions += 1
                     if settings.longBreakEnabled && currentConsecutiveSessions >= settings.sessionsUntilLongBreak {
@@ -2446,7 +2453,13 @@ struct TimerScreen: View {
                     currentEndTime = currentEndTime.addingTimeInterval(TimeInterval(savedStudyTime * 60))
                 }
             }
-            
+
+            // If we hit the iteration cap, the app was killed too long ago — just reset
+            if iterations >= maxIterations {
+                TimerStateManager.shared.clearState()
+                return
+            }
+
             // Set new state
             isStudy = currentIsStudy
             consecutiveSessions = currentConsecutiveSessions
@@ -2487,15 +2500,17 @@ struct TimerScreen: View {
                                              totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         } else {
             cancelScheduledNotifications()
+            motionManager.stopMotionUpdates()
+
+            // Update Live Activity to show paused state before clearing times
+            let pausedEndTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
+            let pausedStartTime = timerStartTime ?? Date()
+            liveActivityManager.updateActivity(startTime: pausedStartTime, endTime: pausedEndTime, isStudy: isStudy, isPaused: true,
+                                               sessionNumber: consecutiveSessions + 1,
+                                               totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
+
             timerStartTime = nil
             timerEndTime = nil
-            motionManager.stopMotionUpdates()
-            
-            let endTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
-            let startTime = Date()
-            liveActivityManager.startActivity(startTime: startTime, endTime: endTime, isStudy: isStudy,
-                                              sessionNumber: consecutiveSessions + 1,
-                                              totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         }
     }
 
@@ -2547,6 +2562,11 @@ struct TimerScreen: View {
     }
     
     func timerCompleted() {
+        // Prevent re-entry if timer fires again during phase transition
+        guard !isTransitioningPhase else { return }
+        isTransitioningPhase = true
+        defer { isTransitioningPhase = false }
+
         if !settings.isMuted { playDingSound() }
         cancelScheduledNotifications()
         scheduleCompletionNotification()
@@ -2689,10 +2709,10 @@ struct TimerScreen: View {
         content.sound = .default
         
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
-        let request = UNNotificationRequest(identifier: "timer_completed_\(UUID().uuidString)", content: content, trigger: trigger)
+        let request = UNNotificationRequest(identifier: "timer_completed", content: content, trigger: trigger)
         UNUserNotificationCenter.current().add(request) { _ in }
     }
-    
+
     func cancelScheduledNotifications() {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["timer_end", "timer_completed"])
     }

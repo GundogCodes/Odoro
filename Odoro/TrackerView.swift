@@ -418,7 +418,8 @@ struct Habit: Identifiable, Codable {
 
 enum HabitColor: String, Codable, CaseIterable {
     case blue, green, purple, orange, red, pink, teal, yellow
-    
+    case indigo, mint, cyan, brown, coral, lavender, lime, gold
+
     var color: Color {
         switch self {
         case .blue: return .blue
@@ -429,9 +430,17 @@ enum HabitColor: String, Codable, CaseIterable {
         case .pink: return .pink
         case .teal: return .teal
         case .yellow: return .yellow
+        case .indigo: return .indigo
+        case .mint: return .mint
+        case .cyan: return .cyan
+        case .brown: return .brown
+        case .coral: return Color(red: 1.0, green: 0.5, blue: 0.44)
+        case .lavender: return Color(red: 0.69, green: 0.61, blue: 0.85)
+        case .lime: return Color(red: 0.55, green: 0.82, blue: 0.15)
+        case .gold: return Color(red: 1.0, green: 0.84, blue: 0.0)
         }
     }
-    
+
     var gradient: LinearGradient {
         switch self {
         case .blue: return LinearGradient(colors: [.blue, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -442,8 +451,80 @@ enum HabitColor: String, Codable, CaseIterable {
         case .pink: return LinearGradient(colors: [.pink, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
         case .teal: return LinearGradient(colors: [.teal, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
         case .yellow: return LinearGradient(colors: [.yellow, .orange], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .indigo: return LinearGradient(colors: [.indigo, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .mint: return LinearGradient(colors: [.mint, .green], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .cyan: return LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .brown: return LinearGradient(colors: [.brown, .orange], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .coral: return LinearGradient(colors: [Color(red: 1.0, green: 0.5, blue: 0.44), .pink], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .lavender: return LinearGradient(colors: [Color(red: 0.69, green: 0.61, blue: 0.85), .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .lime: return LinearGradient(colors: [Color(red: 0.55, green: 0.82, blue: 0.15), .green], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .gold: return LinearGradient(colors: [Color(red: 1.0, green: 0.84, blue: 0.0), .orange], startPoint: .topLeading, endPoint: .bottomTrailing)
         }
     }
+}
+
+// MARK: - Icon Catalog
+struct HabitIcon {
+    let systemName: String
+    let displayName: String
+}
+
+let habitIconCatalog: [HabitIcon] = [
+    // Goals & Achievement
+    HabitIcon(systemName: "target", displayName: "Target"),
+    HabitIcon(systemName: "trophy.fill", displayName: "Trophy"),
+    HabitIcon(systemName: "flag.fill", displayName: "Flag"),
+    HabitIcon(systemName: "star.fill", displayName: "Star"),
+    HabitIcon(systemName: "checkmark.seal.fill", displayName: "Checkmark"),
+    HabitIcon(systemName: "medal.fill", displayName: "Medal"),
+    // Health & Fitness
+    HabitIcon(systemName: "heart.fill", displayName: "Heart"),
+    HabitIcon(systemName: "dumbbell.fill", displayName: "Dumbbell"),
+    HabitIcon(systemName: "figure.walk", displayName: "Walking"),
+    HabitIcon(systemName: "figure.run", displayName: "Running"),
+    HabitIcon(systemName: "figure.yoga", displayName: "Yoga"),
+    HabitIcon(systemName: "drop.fill", displayName: "Water"),
+    HabitIcon(systemName: "fork.knife", displayName: "Food"),
+    HabitIcon(systemName: "bed.double.fill", displayName: "Sleep"),
+    // Mind & Learning
+    HabitIcon(systemName: "brain.head.profile", displayName: "Brain"),
+    HabitIcon(systemName: "book.fill", displayName: "Book"),
+    HabitIcon(systemName: "pencil.and.scribble", displayName: "Writing"),
+    HabitIcon(systemName: "graduationcap.fill", displayName: "Study"),
+    HabitIcon(systemName: "lightbulb.fill", displayName: "Idea"),
+    // Nature & Weather
+    HabitIcon(systemName: "leaf.fill", displayName: "Leaf"),
+    HabitIcon(systemName: "sun.max.fill", displayName: "Sun"),
+    HabitIcon(systemName: "moon.fill", displayName: "Moon"),
+    HabitIcon(systemName: "flame.fill", displayName: "Flame"),
+    HabitIcon(systemName: "bolt.fill", displayName: "Bolt"),
+    // Lifestyle
+    HabitIcon(systemName: "music.note", displayName: "Music"),
+    HabitIcon(systemName: "paintbrush.fill", displayName: "Art"),
+    HabitIcon(systemName: "camera.fill", displayName: "Camera"),
+    HabitIcon(systemName: "gamecontroller.fill", displayName: "Gaming"),
+    HabitIcon(systemName: "cup.and.saucer.fill", displayName: "Coffee"),
+    // Productivity & Work
+    HabitIcon(systemName: "clock.fill", displayName: "Clock"),
+    HabitIcon(systemName: "bell.fill", displayName: "Bell"),
+    HabitIcon(systemName: "chart.bar.fill", displayName: "Chart"),
+    HabitIcon(systemName: "globe", displayName: "Globe"),
+    HabitIcon(systemName: "laptopcomputer", displayName: "Laptop"),
+    HabitIcon(systemName: "briefcase.fill", displayName: "Work"),
+    // Misc
+    HabitIcon(systemName: "hand.raised.fill", displayName: "Hand"),
+    HabitIcon(systemName: "eye.fill", displayName: "Eye"),
+    HabitIcon(systemName: "speaker.fill", displayName: "Speaker"),
+    HabitIcon(systemName: "pawprint.fill", displayName: "Pet"),
+    HabitIcon(systemName: "house.fill", displayName: "Home"),
+]
+
+// Helper to get clean display name from a system icon name
+func iconDisplayName(for systemName: String) -> String {
+    habitIconCatalog.first(where: { $0.systemName == systemName })?.displayName ?? systemName
+        .replacingOccurrences(of: ".fill", with: "")
+        .replacingOccurrences(of: ".", with: " ")
+        .capitalized
 }
 
 // MARK: - Habit Manager
@@ -1052,12 +1133,14 @@ struct GridContent: View {
     private func cellColor(at index: Int) -> Color {
         if isManualMode {
             // Manual mode: check if this specific cell is in the filled set
+            // currentCellIndex is global, so make it page-relative for comparison
+            let pageCellIndex = currentCellIndex - pageOffset
             if manuallyFilledCells.contains(pageOffset + index) {
                 return color
-            } else if index == currentCellIndex {
+            } else if index == pageCellIndex {
                 // Highlight today's cell with a subtle border/tint if not filled
                 return Color.white.opacity(0.25)
-            } else if index > currentCellIndex {
+            } else if index > pageCellIndex {
                 // Future cells are dimmer
                 return Color.white.opacity(0.1)
             } else {
@@ -1282,7 +1365,7 @@ struct TextCounterView: View {
         
         // For months/years, use calendar-based calculation for accuracy
         let calendar = Calendar.current
-        let referenceDate = habit.type == .countdown ? currentTime : habit.startDate
+        let referenceDate = habit.type == .countdown ? currentTime : habit.referenceDate
         let targetForCalc = habit.type == .countdown ? calculatedTargetDate : currentTime
         let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: referenceDate, to: targetForCalc)
         
@@ -1762,12 +1845,7 @@ struct AddHabitSheet: View {
         }
     }
     
-    private let icons = [
-        "target", "flame.fill", "star.fill", "heart.fill",
-        "book.fill", "dumbbell.fill", "drop.fill", "leaf.fill",
-        "moon.fill", "sun.max.fill", "bolt.fill", "checkmark.seal.fill",
-        "trophy.fill", "flag.fill", "bell.fill", "clock.fill"
-    ]
+    private let icons = habitIconCatalog
     
     var body: some View {
         NavigationView {
@@ -1818,17 +1896,17 @@ struct AddHabitSheet: View {
                             .cornerRadius(10)
                         
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
-                            ForEach(icons, id: \.self) { iconName in
+                            ForEach(icons, id: \.systemName) { habitIcon in
                                 Button {
-                                    icon = iconName
+                                    icon = habitIcon.systemName
                                 } label: {
-                                    Image(systemName: iconName)
+                                    Image(systemName: habitIcon.systemName)
                                         .font(.title3)
-                                        .foregroundColor(icon == iconName ? color.color : .secondary)
+                                        .foregroundColor(icon == habitIcon.systemName ? color.color : .secondary)
                                         .frame(width: 40, height: 40)
                                         .background(
                                             Circle()
-                                                .fill(icon == iconName ? color.color.opacity(0.2) : Color(.secondarySystemGroupedBackground))
+                                                .fill(icon == habitIcon.systemName ? color.color.opacity(0.2) : Color(.secondarySystemGroupedBackground))
                                         )
                                 }
                             }
@@ -2528,11 +2606,11 @@ struct HabitDetailSheet: View {
                                     Text("Icon")
                                     Spacer()
                                     Menu {
-                                        ForEach(["target", "flame.fill", "star.fill", "heart.fill", "book.fill", "figure.walk", "brain.head.profile", "dumbbell.fill", "music.note", "pencil.and.scribble", "globe", "chart.bar.fill", "speaker.fill", "eye.fill", "hand.raised.fill", "leaf.fill", "moon.fill", "sun.max.fill", "bolt.fill", "trophy.fill"], id: \.self) { icon in
+                                        ForEach(habitIconCatalog, id: \.systemName) { habitIcon in
                                             Button {
-                                                habit.icon = icon
+                                                habit.icon = habitIcon.systemName
                                             } label: {
-                                                Label(icon, systemImage: icon)
+                                                Label(habitIcon.displayName, systemImage: habitIcon.systemName)
                                             }
                                         }
                                     } label: {
@@ -3015,7 +3093,9 @@ struct MinimalHabitView: View {
         } else {
             filled = habit.elapsedCells
         }
-        return CGFloat(min(filled, total)) / CGFloat(total)
+        let rawProgress = CGFloat(min(filled, total)) / CGFloat(total)
+        // Countdown habits show remaining progress (depleting), not elapsed
+        return habit.type == .countdown ? max(0, 1.0 - rawProgress) : rawProgress
     }
 
     var body: some View {
