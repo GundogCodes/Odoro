@@ -5,11 +5,10 @@ Odoro is a productivity app that combines a Pomodoro-style focus timer with a vi
 ---
 
 ## Screenshots
-<p align="center">
-<img width="320" height="868" alt="Simulator Screenshot - iPhone 16 Pro Max - 2025-08-13 at 18 10 12" src="https://github.com/user-attachments/assets/e2c01057-21bc-4761-ad58-27dbc4fb70fc" />
-<img width="320" height="868" alt="Simulator Screenshot - iPhone 16 Pro Max - 2025-08-13 at 18 09 37" src="https://github.com/user-attachments/assets/8c716c9b-8e17-4133-99f8-8aaf4d8f03bc" />
-<img width="320" height="868" alt="Simulator Screenshot - iPhone 16 Pro Max - 2025-08-13 at 18 10 38" src="https://github.com/user-attachments/assets/fbc1b155-c780-4fb5-81c1-9bc42e0eb33c" />
-</p>
+<img width="1206" height="2622" alt="Simulator Screenshot - iPhone 17 Pro - 2026-03-05 at 18 05 02" src="https://github.com/user-attachments/assets/99deb673-57ca-4069-9611-ebb59ad2ebc4" />
+<img width="1206" height="2622" alt="Simulator Screenshot - iPhone 17 Pro - 2026-03-05 at 18 04 44" src="https://github.com/user-attachments/assets/7292c9d2-6de6-461a-88d5-e3290d010649" />
+<img width="1206" height="2622" alt="Simulator Screenshot - iPhone 17 Pro - 2026-03-05 at 18 05 49" src="https://github.com/user-attachments/assets/b46b2d64-944e-4148-acc9-365644604832" />
+
 
 ---
 
