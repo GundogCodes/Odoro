@@ -6,9 +6,9 @@ Odoro is a productivity app that combines a Pomodoro-style focus timer with a vi
 
 ## Screenshots
 <p align="center">
-<img width="250" alt="Timer Screen" src="https://github.com/user-attachments/assets/99deb673-57ca-4069-9611-ebb59ad2ebc4" />
-&nbsp;&nbsp;
 <img width="250" alt="Habit Tracker" src="https://github.com/user-attachments/assets/7292c9d2-6de6-461a-88d5-e3290d010649" />
+&nbsp;&nbsp;
+<img width="250" alt="Timer Screen" src="https://github.com/user-attachments/assets/99deb673-57ca-4069-9611-ebb59ad2ebc4" />
 &nbsp;&nbsp;
 <img width="250" alt="Habit Detail" src="https://github.com/user-attachments/assets/b46b2d64-944e-4148-acc9-365644604832" />
 </p>
