@@ -2554,6 +2554,7 @@ struct HabitDetailSheet: View {
     @State private var pendingStyle: HabitVisualStyle?
     @State private var previousStyle: HabitVisualStyle?
     @State private var suppressStyleChange = false
+    @State private var showResetConfirmation = false
 
     var body: some View {
         NavigationView {
@@ -2913,10 +2914,7 @@ struct HabitDetailSheet: View {
                             .background(Color(.secondarySystemGroupedBackground))
                             
                             Button {
-                                habitManager.resetProgress(for: habit)
-                                if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
-                                    habit = updated
-                                }
+                                showResetConfirmation = true
                             } label: {
                                 HStack {
                                     Image(systemName: "arrow.counterclockwise")
@@ -2927,6 +2925,17 @@ struct HabitDetailSheet: View {
                                 .foregroundColor(.orange)
                             }
                             .background(Color(.secondarySystemGroupedBackground))
+                            .alert("Reset Progress", isPresented: $showResetConfirmation) {
+                                Button("Cancel", role: .cancel) { }
+                                Button("Reset", role: .destructive) {
+                                    habitManager.resetProgress(for: habit)
+                                    if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
+                                        habit = updated
+                                    }
+                                }
+                            } message: {
+                                Text("Are you sure you want to reset this habit? All progress will be lost.")
+                            }
                             
                             Button(role: .destructive) {
                                 habitManager.deleteHabit(habit)
