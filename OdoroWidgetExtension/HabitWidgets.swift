@@ -459,22 +459,30 @@ struct WidgetTimelineBarView: View {
         }
     }
 
-    private var totalTicks: Int { habit.timelineDuration }
+    private var totalTicks: Int {
+        // Match main app: for toTargetDate, calculate ticks from referenceDate to targetDate
+        if habit.durationType == .toTargetDate, let target = habit.targetDate {
+            return max(1, calculateTicksBetween(from: habit.referenceDate, to: target))
+        }
+        return habit.timelineDuration
+    }
+
+    private func calculateTicksBetween(from startDate: Date, to endDate: Date) -> Int {
+        let calendar = Calendar.current
+        switch habit.timelineTickUnit {
+        case .minute: return calendar.dateComponents([.minute], from: startDate, to: endDate).minute ?? 0
+        case .hour: return calendar.dateComponents([.hour], from: startDate, to: endDate).hour ?? 0
+        case .day: return calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+        case .week:
+            let days = calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+            return days / 7
+        case .month: return calendar.dateComponents([.month], from: startDate, to: endDate).month ?? 0
+        case .year: return calendar.dateComponents([.year], from: startDate, to: endDate).year ?? 0
+        }
+    }
 
     private var elapsedTicks: Int {
-        let calendar = Calendar.current
-        let now = Date()
-        var ticks: Int
-        switch habit.timelineTickUnit {
-        case .minute: ticks = calendar.dateComponents([.minute], from: habit.referenceDate, to: now).minute ?? 0
-        case .hour: ticks = calendar.dateComponents([.hour], from: habit.referenceDate, to: now).hour ?? 0
-        case .day: ticks = calendar.dateComponents([.day], from: habit.referenceDate, to: now).day ?? 0
-        case .week:
-            let days = calendar.dateComponents([.day], from: habit.referenceDate, to: now).day ?? 0
-            ticks = days / 7
-        case .month: ticks = calendar.dateComponents([.month], from: habit.referenceDate, to: now).month ?? 0
-        case .year: ticks = calendar.dateComponents([.year], from: habit.referenceDate, to: now).year ?? 0
-        }
+        let ticks = calculateTicksBetween(from: habit.referenceDate, to: Date())
         return max(0, min(ticks, totalTicks))
     }
     
@@ -519,7 +527,7 @@ struct WidgetTimelineBarView: View {
         if habit.type == .countdown {
             return String(format: "%.1f%% remaining", progress * 100)
         } else {
-            return String(format: "%.1f%% complete", (1 - progress) * 100)
+            return String(format: "%.1f%% complete", progress * 100)
         }
     }
     
