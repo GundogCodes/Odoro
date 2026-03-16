@@ -130,7 +130,7 @@ struct WidgetGridView: View {
     private var progressLabel: String {
         let pageInfo = habit.gridPageInfo
         let totalDuration = habit.totalDurationCells
-        
+
         let unitSuffix: String = {
             switch habit.cellUnit {
             case .day: return "d"
@@ -139,13 +139,27 @@ struct WidgetGridView: View {
             case .year: return "y"
             }
         }()
-        
+
         if habit.updateMode == .manual {
             let filledCount = habit.manuallyFilledCells.count
+            if habit.durationType == .indefinite {
+                let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
+                return "\(filledCount)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
+            }
             return "\(filledCount)/\(totalDuration)"
         }
-        
+
         let elapsed = habit.elapsedCells
+
+        if habit.durationType == .indefinite {
+            let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
+            return "\(pageInfo.filledInCurrentPage)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
+        }
+
+        if pageInfo.totalPages > 1 {
+            return "\(elapsed)/\(totalDuration)\(unitSuffix) (\(pageInfo.currentPage + 1)/\(pageInfo.totalPages))"
+        }
+
         return "\(elapsed)/\(totalDuration)\(unitSuffix)"
     }
     
@@ -326,7 +340,7 @@ struct WidgetTextCounterView: View {
         habit.timeUnit.rawValue.lowercased()
     }
     
-    // Time components for medium/large widgets
+    // Time components for medium/large widgets (matches in-app calendar-based calculations)
     private var timeComponents: [(value: String, label: String)] {
         let interval = abs(timeInterval)
         let totalSeconds = Int(interval)
@@ -336,7 +350,20 @@ struct WidgetTextCounterView: View {
         let totalHours = totalMinutes / 60
         let hours = totalHours % 24
         let totalDays = totalHours / 24
-        
+
+        // For months/years, use calendar-based calculation for accuracy (matches in-app)
+        let calendar = Calendar.current
+        let referenceDate = habit.type == .countdown ? Date() : habit.referenceDate
+        let targetForCalc = habit.type == .countdown ? calculatedTargetDate : Date()
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: referenceDate, to: targetForCalc)
+
+        let calendarYears = abs(components.year ?? 0)
+        let calendarMonths = abs(components.month ?? 0)
+        let calendarDays = abs(components.day ?? 0)
+        let calendarHours = abs(components.hour ?? 0)
+        let calendarMinutes = abs(components.minute ?? 0)
+        let calendarSeconds = abs(components.second ?? 0)
+
         switch habit.timeUnit {
         case .seconds:
             return [("\(totalSeconds)", "sec")]
@@ -351,14 +378,9 @@ struct WidgetTextCounterView: View {
             let days = totalDays % 7
             return [("\(weeks)", "wks"), ("\(days)", "days"), (String(format: "%02d", hours), "hrs")]
         case .months:
-            let months = totalDays / 30
-            let days = totalDays % 30
-            return [("\(months)", "mos"), ("\(days)", "days"), (String(format: "%02d", hours), "hrs")]
+            return [("\(calendarMonths)", "mon"), ("\(calendarDays)", "days"), (String(format: "%02d", calendarHours), "hrs")]
         case .years:
-            let years = totalDays / 365
-            let months = (totalDays % 365) / 30
-            let days = (totalDays % 365) % 30
-            return [("\(years)", "yrs"), ("\(months)", "mos"), ("\(days)", "days")]
+            return [("\(calendarYears)", "yrs"), ("\(calendarMonths)", "mon"), ("\(calendarDays)", "days")]
         }
     }
     
