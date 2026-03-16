@@ -662,17 +662,42 @@ class HabitManager: ObservableObject {
         }
     }
     
+    private let backupKey = "habits_backup"
+
     func save() {
         if let encoded = try? JSONEncoder().encode(habits) {
+            // Always keep a backup of the last known good data before overwriting
+            if let existing = UserDefaults.standard.data(forKey: saveKey) {
+                UserDefaults.standard.set(existing, forKey: backupKey)
+            }
             UserDefaults.standard.set(encoded, forKey: saveKey)
         }
         syncToWidget()
     }
-    
+
     func load() {
-        if let data = UserDefaults.standard.data(forKey: saveKey),
-           let decoded = try? JSONDecoder().decode([Habit].self, from: data) {
+        guard let data = UserDefaults.standard.data(forKey: saveKey) else { return }
+
+        do {
+            let decoded = try JSONDecoder().decode([Habit].self, from: data)
             habits = decoded
+        } catch {
+            print("❌ Primary decode failed: \(error)")
+            print("🔄 Attempting to restore from backup...")
+
+            // Primary decode failed — try the backup
+            if let backupData = UserDefaults.standard.data(forKey: backupKey),
+               let backupDecoded = try? JSONDecoder().decode([Habit].self, from: backupData) {
+                habits = backupDecoded
+                print("✅ Restored \(backupDecoded.count) habits from backup")
+
+                // Re-save the backup data as primary so next launch works
+                UserDefaults.standard.set(backupData, forKey: saveKey)
+            } else {
+                print("❌ Backup also unavailable. Keeping raw data intact for future recovery.")
+                // Do NOT clear the data — leave it in UserDefaults so a future
+                // app update with a fixed decoder can still recover it.
+            }
         }
     }
     
