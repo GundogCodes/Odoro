@@ -148,6 +148,14 @@ struct HabitNote: Identifiable, Codable {
     var createdAt: Date
 }
 
+// MARK: - ResetEvent (MUST match main app exactly)
+struct ResetEvent: Identifiable, Codable {
+    var id: UUID
+    var date: Date
+    var progressAtReset: Int
+    var durationAtReset: Int
+}
+
 // MARK: - Habit (MUST match main app exactly - same property order)
 // Uses custom init(from:) with defaults so new properties in the main app won't break widget decoding
 struct Habit: Identifiable, Codable {
@@ -173,6 +181,9 @@ struct Habit: Identifiable, Codable {
     var cycleCount: Int
     var manuallyFilledCells: Set<Int>
     var lastResetDate: Date?            // For auto-tracking: when progress was last reset
+
+    // Analytics tracking
+    var resetHistory: [ResetEvent]
 
     // Notes & Completion
     var notes: [HabitNote]
@@ -213,6 +224,7 @@ struct Habit: Identifiable, Codable {
         cycleCount = try container.decodeIfPresent(Int.self, forKey: .cycleCount) ?? 0
         manuallyFilledCells = try container.decodeIfPresent(Set<Int>.self, forKey: .manuallyFilledCells) ?? []
         lastResetDate = try container.decodeIfPresent(Date.self, forKey: .lastResetDate)
+        resetHistory = try container.decodeIfPresent([ResetEvent].self, forKey: .resetHistory) ?? []
         notes = try container.decodeIfPresent([HabitNote].self, forKey: .notes) ?? []
         isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
         completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)

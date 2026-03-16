@@ -119,10 +119,24 @@ struct HabitNote: Identifiable, Codable {
     var id = UUID()
     var content: String
     var createdAt: Date
-    
+
     init(content: String) {
         self.content = content
         self.createdAt = Date()
+    }
+}
+
+// MARK: - Reset Event (tracks each reset with progress snapshot)
+struct ResetEvent: Identifiable, Codable {
+    var id = UUID()
+    var date: Date
+    var progressAtReset: Int            // How much progress was made before this reset
+    var durationAtReset: Int            // What the total duration was at reset time
+
+    init(date: Date = Date(), progressAtReset: Int = 0, durationAtReset: Int = 0) {
+        self.date = date
+        self.progressAtReset = progressAtReset
+        self.durationAtReset = durationAtReset
     }
 }
 
@@ -134,7 +148,7 @@ struct Habit: Identifiable, Codable {
     var updateMode: HabitUpdateMode
     var visualStyle: HabitVisualStyle
     var widgetSize: HabitWidgetSize
-    
+
     // Grid settings
     var cellUnit: CellUnit              // What each cell represents (day/month)
     var durationType: GridDurationType  // How duration is calculated
@@ -143,23 +157,26 @@ struct Habit: Identifiable, Codable {
     var textCounterDuration: Int        // Duration value for text counter style
     var timelineTickUnit: TimelineTickUnit  // What each tick represents on timeline
     var timelineDuration: Int           // Duration value for timeline bar
-    
+
     // Progress tracking
     var currentValue: Int               // Current progress (cells filled for manual)
     var cycleCount: Int                 // How many times grid has cycled (for indefinite)
     var manuallyFilledCells: Set<Int>   // Which specific cells are filled (for manual tracking)
     var lastResetDate: Date?            // For auto-tracking: when progress was last reset
-    
+
+    // Analytics tracking
+    var resetHistory: [ResetEvent]      // Full history of all resets
+
     // Notes & Completion
     var notes: [HabitNote]              // User's timestamped notes/journal entries
     var isCompleted: Bool               // Whether the habit goal is completed
     var completedAt: Date?              // When the habit was marked complete
     var goalNotificationSent: Bool      // Whether goal reached notification was sent
-    
+
     // Display settings
     var timeUnit: HabitTimeUnit         // Display unit for text counter
     var color: HabitColor
-    
+
     var createdAt: Date
     
     // Start date is always creation date (today when created)
@@ -201,6 +218,7 @@ struct Habit: Identifiable, Codable {
         self.currentValue = 0
         self.cycleCount = 0
         self.manuallyFilledCells = []
+        self.resetHistory = []
         self.notes = []
         self.isCompleted = false
         self.completedAt = nil
@@ -209,7 +227,41 @@ struct Habit: Identifiable, Codable {
         self.color = color
         self.createdAt = Date()
     }
-    
+
+    // MARK: - Resilient Decoding
+    // Custom decoder ensures old saved data (missing new keys like resetHistory)
+    // loads successfully instead of failing and wiping all habits.
+    // Every new property MUST be decoded with decodeIfPresent + a default.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decode(String.self, forKey: .name)
+        icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? "target"
+        type = try container.decodeIfPresent(HabitType.self, forKey: .type) ?? .countUp
+        updateMode = try container.decodeIfPresent(HabitUpdateMode.self, forKey: .updateMode) ?? .auto
+        visualStyle = try container.decodeIfPresent(HabitVisualStyle.self, forKey: .visualStyle) ?? .grid
+        widgetSize = try container.decodeIfPresent(HabitWidgetSize.self, forKey: .widgetSize) ?? .full
+        cellUnit = try container.decodeIfPresent(CellUnit.self, forKey: .cellUnit) ?? .day
+        durationType = try container.decodeIfPresent(GridDurationType.self, forKey: .durationType) ?? .customRange
+        customDuration = try container.decodeIfPresent(Int.self, forKey: .customDuration) ?? 30
+        targetDate = try container.decodeIfPresent(Date.self, forKey: .targetDate)
+        textCounterDuration = try container.decodeIfPresent(Int.self, forKey: .textCounterDuration) ?? 30
+        timelineTickUnit = try container.decodeIfPresent(TimelineTickUnit.self, forKey: .timelineTickUnit) ?? .day
+        timelineDuration = try container.decodeIfPresent(Int.self, forKey: .timelineDuration) ?? 30
+        currentValue = try container.decodeIfPresent(Int.self, forKey: .currentValue) ?? 0
+        cycleCount = try container.decodeIfPresent(Int.self, forKey: .cycleCount) ?? 0
+        manuallyFilledCells = try container.decodeIfPresent(Set<Int>.self, forKey: .manuallyFilledCells) ?? []
+        lastResetDate = try container.decodeIfPresent(Date.self, forKey: .lastResetDate)
+        resetHistory = try container.decodeIfPresent([ResetEvent].self, forKey: .resetHistory) ?? []
+        notes = try container.decodeIfPresent([HabitNote].self, forKey: .notes) ?? []
+        isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
+        completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        goalNotificationSent = try container.decodeIfPresent(Bool.self, forKey: .goalNotificationSent) ?? false
+        timeUnit = try container.decodeIfPresent(HabitTimeUnit.self, forKey: .timeUnit) ?? .days
+        color = try container.decodeIfPresent(HabitColor.self, forKey: .color) ?? .blue
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
+
     // Calculate current cell index based on elapsed time
     var currentCellIndex: Int {
         let calendar = Calendar.current
@@ -693,6 +745,15 @@ class HabitManager: ObservableObject {
     
     func resetProgress(for habit: Habit) {
         if var h = habits.first(where: { $0.id == habit.id }) {
+            // Record the reset event with current progress snapshot
+            let progressAtReset = h.updateMode == .manual ? h.manuallyFilledCells.count : h.elapsedCells
+            let resetEvent = ResetEvent(
+                date: Date(),
+                progressAtReset: progressAtReset,
+                durationAtReset: h.totalDurationCells
+            )
+            h.resetHistory.append(resetEvent)
+
             h.currentValue = 0
             h.cycleCount = 0
             h.manuallyFilledCells.removeAll()
@@ -2833,6 +2894,9 @@ struct HabitDetailSheet: View {
                             .background(Color(.secondarySystemGroupedBackground))
                         }
                         
+                        // Analytics Section
+                        HabitAnalyticsSection(habit: habit)
+
                         // Notes Section
                         SettingsSection(title: "Notes & Journey (\(habit.notes.count))") {
                             // Add note button
@@ -3047,6 +3111,540 @@ struct HabitDetailSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Habit Analytics View
+struct HabitAnalyticsSection: View {
+    let habit: Habit
+
+    private var daysSinceCreation: Int {
+        max(1, Calendar.current.dateComponents([.day], from: habit.createdAt, to: Date()).day ?? 1)
+    }
+
+    private var totalTimeTracked: String {
+        let interval = Date().timeIntervalSince(habit.createdAt)
+        let days = Int(interval / 86400)
+        if days >= 365 {
+            let years = days / 365
+            let remaining = (days % 365) / 30
+            return remaining > 0 ? "\(years)y \(remaining)mo" : "\(years)y"
+        } else if days >= 30 {
+            let months = days / 30
+            let remaining = days % 30
+            return remaining > 0 ? "\(months)mo \(remaining)d" : "\(months)mo"
+        } else if days >= 7 {
+            let weeks = days / 7
+            let remaining = days % 7
+            return remaining > 0 ? "\(weeks)w \(remaining)d" : "\(weeks)w"
+        }
+        return "\(days)d"
+    }
+
+    private var currentStreakDays: Int {
+        let ref = habit.referenceDate
+        return max(0, Calendar.current.dateComponents([.day], from: ref, to: Date()).day ?? 0)
+    }
+
+    private var longestStreakDays: Int {
+        guard !habit.resetHistory.isEmpty else { return currentStreakDays }
+        var longest = currentStreakDays
+        var previousDate = habit.createdAt
+        for event in habit.resetHistory.sorted(by: { $0.date < $1.date }) {
+            let streak = Calendar.current.dateComponents([.day], from: previousDate, to: event.date).day ?? 0
+            longest = max(longest, streak)
+            previousDate = event.date
+        }
+        return longest
+    }
+
+    private var averageTimeBetweenResets: String {
+        guard habit.resetHistory.count >= 1 else { return "—" }
+        let sorted = habit.resetHistory.sorted(by: { $0.date < $1.date })
+        var intervals: [TimeInterval] = []
+        var prevDate = habit.createdAt
+        for event in sorted {
+            intervals.append(event.date.timeIntervalSince(prevDate))
+            prevDate = event.date
+        }
+        let avg = intervals.reduce(0, +) / Double(intervals.count)
+        let days = Int(avg / 86400)
+        if days >= 30 {
+            return "\(days / 30)mo \(days % 30)d"
+        } else if days >= 7 {
+            return "\(days / 7)w \(days % 7)d"
+        }
+        return "\(days)d"
+    }
+
+    private var completionPercentage: Double {
+        let total = habit.totalDurationCells
+        guard total > 0 else { return 0 }
+        let elapsed = habit.elapsedCells
+        return min(Double(elapsed) / Double(total) * 100, 100)
+    }
+
+    private var projectedCompletionDate: String {
+        guard habit.durationType != .indefinite else { return "—" }
+        let total = habit.totalDurationCells
+        let elapsed = habit.elapsedCells
+        let remaining = total - elapsed
+        guard remaining > 0 else { return "Reached" }
+        let calendar = Calendar.current
+        switch habit.cellUnit {
+        case .day: return (calendar.date(byAdding: .day, value: remaining, to: Date()) ?? Date()).formatted(date: .abbreviated, time: .omitted)
+        case .week: return (calendar.date(byAdding: .weekOfYear, value: remaining, to: Date()) ?? Date()).formatted(date: .abbreviated, time: .omitted)
+        case .month: return (calendar.date(byAdding: .month, value: remaining, to: Date()) ?? Date()).formatted(date: .abbreviated, time: .omitted)
+        case .year: return (calendar.date(byAdding: .year, value: remaining, to: Date()) ?? Date()).formatted(date: .abbreviated, time: .omitted)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("ANALYTICS")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.horizontal)
+                .padding(.top, 20)
+                .padding(.bottom, 8)
+
+            VStack(spacing: 1) {
+                // Summary stats grid
+                VStack(spacing: 12) {
+                    HStack(spacing: 12) {
+                        StatCard(title: "Total Time", value: totalTimeTracked, icon: "clock.fill", color: habit.color.color)
+                        StatCard(title: "Resets", value: "\(habit.resetHistory.count)", icon: "arrow.counterclockwise", color: .orange)
+                    }
+                    HStack(spacing: 12) {
+                        StatCard(title: "Current Streak", value: "\(currentStreakDays)d", icon: "flame.fill", color: .red)
+                        StatCard(title: "Longest Streak", value: "\(longestStreakDays)d", icon: "trophy.fill", color: .yellow)
+                    }
+                    HStack(spacing: 12) {
+                        StatCard(title: "Progress", value: String(format: "%.1f%%", completionPercentage), icon: "chart.bar.fill", color: .green)
+                        if habit.resetHistory.count >= 1 {
+                            StatCard(title: "Avg Between Resets", value: averageTimeBetweenResets, icon: "arrow.triangle.2.circlepath", color: .purple)
+                        } else {
+                            StatCard(title: "Projected End", value: projectedCompletionDate, icon: "calendar.badge.clock", color: .blue)
+                        }
+                    }
+                }
+                .padding(12)
+                .background(Color(.secondarySystemGroupedBackground))
+
+                // Style-specific graph
+                switch habit.visualStyle {
+                case .grid:
+                    GridAnalyticsGraph(habit: habit)
+                        .padding(12)
+                        .background(Color(.secondarySystemGroupedBackground))
+                case .bar:
+                    TimelineAnalyticsGraph(habit: habit)
+                        .padding(12)
+                        .background(Color(.secondarySystemGroupedBackground))
+                case .text:
+                    TextCounterAnalyticsGraph(habit: habit)
+                        .padding(12)
+                        .background(Color(.secondarySystemGroupedBackground))
+                }
+
+                // Reset history (if any)
+                if !habit.resetHistory.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Reset History")
+                            .font(.subheadline.weight(.semibold))
+                        ForEach(habit.resetHistory.sorted(by: { $0.date > $1.date }).prefix(5)) { event in
+                            HStack {
+                                Circle()
+                                    .fill(.orange)
+                                    .frame(width: 6, height: 6)
+                                Text(event.date.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                Spacer()
+                                Text("\(event.progressAtReset)/\(event.durationAtReset)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        if habit.resetHistory.count > 5 {
+                            Text("\(habit.resetHistory.count - 5) more resets...")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color(.secondarySystemGroupedBackground))
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal)
+        }
+    }
+}
+
+// MARK: - Stat Card
+struct StatCard: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption2)
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            Text(value)
+                .font(.system(.title3, design: .rounded, weight: .bold))
+                .foregroundColor(.primary)
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(color.opacity(0.08))
+        )
+    }
+}
+
+// MARK: - Grid Analytics: Weekly fill-rate bar chart
+struct GridAnalyticsGraph: View {
+    let habit: Habit
+
+    private var weeklyData: [(week: String, filled: Int, total: Int)] {
+        let calendar = Calendar.current
+        let now = Date()
+        let weeksToShow = min(12, max(1, (calendar.dateComponents([.weekOfYear], from: habit.createdAt, to: now).weekOfYear ?? 0) + 1))
+
+        var data: [(String, Int, Int)] = []
+        for weekOffset in (0..<weeksToShow).reversed() {
+            guard let weekStart = calendar.date(byAdding: .weekOfYear, value: -weekOffset, to: now),
+                  let weekStartNormalized = calendar.dateInterval(of: .weekOfYear, for: weekStart)?.start else { continue }
+
+            let label = weekStartNormalized.formatted(.dateTime.month(.abbreviated).day())
+            let daysSinceCreation = max(0, calendar.dateComponents([.day], from: habit.createdAt, to: weekStartNormalized).day ?? 0)
+            let totalDaysInWeek = min(7, max(0, calendar.dateComponents([.day], from: weekStartNormalized, to: min(now, calendar.date(byAdding: .day, value: 7, to: weekStartNormalized) ?? now)).day ?? 0))
+
+            if habit.updateMode == .manual {
+                let filledInWeek = (0..<7).reduce(0) { count, dayOff in
+                    let cellIndex = daysSinceCreation + dayOff
+                    return count + (habit.manuallyFilledCells.contains(cellIndex) ? 1 : 0)
+                }
+                data.append((label, filledInWeek, totalDaysInWeek))
+            } else {
+                // Auto-tracking: days in this week that are elapsed
+                let elapsedDaysTotal = calendar.dateComponents([.day], from: habit.referenceDate, to: now).day ?? 0
+                let weekEndDays = daysSinceCreation + totalDaysInWeek
+                let filledInWeek = max(0, min(totalDaysInWeek, elapsedDaysTotal - daysSinceCreation))
+                data.append((label, max(0, filledInWeek), totalDaysInWeek))
+            }
+        }
+        return data
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Weekly Activity")
+                .font(.subheadline.weight(.semibold))
+
+            GeometryReader { geo in
+                let barWidth = max(8, (geo.size.width - CGFloat(weeklyData.count - 1) * 4) / CGFloat(max(1, weeklyData.count)))
+                let maxVal = max(1, weeklyData.map(\.filled).max() ?? 1)
+
+                HStack(alignment: .bottom, spacing: 4) {
+                    ForEach(Array(weeklyData.enumerated()), id: \.offset) { _, item in
+                        VStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(habit.color.gradient)
+                                .frame(width: barWidth, height: max(4, CGFloat(item.filled) / CGFloat(maxVal) * (geo.size.height - 20)))
+                            Text(item.week)
+                                .font(.system(size: 7))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            .frame(height: 100)
+        }
+    }
+}
+
+// MARK: - Timeline Analytics: Progress curve line chart
+struct TimelineAnalyticsGraph: View {
+    let habit: Habit
+
+    private var progressPoints: [(day: Int, progress: Double)] {
+        let calendar = Calendar.current
+        let totalDays = max(1, calendar.dateComponents([.day], from: habit.createdAt, to: Date()).day ?? 1)
+        let sampleCount = min(totalDays, 20)
+        let step = max(1, totalDays / sampleCount)
+        let totalDuration = Double(habit.totalDurationCells)
+        guard totalDuration > 0 else { return [] }
+
+        var points: [(Int, Double)] = []
+        for i in stride(from: 0, through: totalDays, by: step) {
+            let progress = min(Double(i) / totalDuration * 100, 100)
+            points.append((i, progress))
+        }
+        // Always include current day
+        if points.last?.0 != totalDays {
+            points.append((totalDays, min(Double(totalDays) / totalDuration * 100, 100)))
+        }
+        return points
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Progress Over Time")
+                .font(.subheadline.weight(.semibold))
+
+            GeometryReader { geo in
+                let maxDay = max(1, progressPoints.last?.day ?? 1)
+                let width = geo.size.width
+                let height = geo.size.height
+
+                // Ideal pace line
+                Path { path in
+                    path.move(to: CGPoint(x: 0, y: height))
+                    path.addLine(to: CGPoint(x: width, y: 0))
+                }
+                .stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+
+                // Actual progress line
+                Path { path in
+                    for (index, point) in progressPoints.enumerated() {
+                        let x = CGFloat(point.day) / CGFloat(maxDay) * width
+                        let y = height - (CGFloat(point.progress) / 100 * height)
+                        if index == 0 { path.move(to: CGPoint(x: x, y: y)) }
+                        else { path.addLine(to: CGPoint(x: x, y: y)) }
+                    }
+                }
+                .stroke(habit.color.gradient, lineWidth: 2)
+
+                // Reset markers
+                ForEach(habit.resetHistory) { event in
+                    let dayOfReset = Calendar.current.dateComponents([.day], from: habit.createdAt, to: event.date).day ?? 0
+                    let x = CGFloat(dayOfReset) / CGFloat(maxDay) * width
+                    Circle()
+                        .fill(.orange)
+                        .frame(width: 6, height: 6)
+                        .position(x: x, y: height - 3)
+                }
+
+                // Labels
+                HStack {
+                    Text("Day 0")
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("Day \(maxDay)")
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
+                }
+                .offset(y: height + 2)
+
+                // Legend
+                HStack(spacing: 12) {
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 1).fill(habit.color.color).frame(width: 12, height: 2)
+                        Text("Actual").font(.system(size: 8)).foregroundColor(.secondary)
+                    }
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 1).stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [3, 3])).frame(width: 12, height: 2)
+                        Text("Ideal").font(.system(size: 8)).foregroundColor(.secondary)
+                    }
+                    if !habit.resetHistory.isEmpty {
+                        HStack(spacing: 4) {
+                            Circle().fill(.orange).frame(width: 4, height: 4)
+                            Text("Resets").font(.system(size: 8)).foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .offset(y: height + 14)
+            }
+            .frame(height: 120)
+            .padding(.bottom, 30)
+        }
+    }
+}
+
+// MARK: - Text Counter Analytics: Milestone markers
+struct TextCounterAnalyticsGraph: View {
+    let habit: Habit
+
+    private var milestones: [(label: String, percent: Double, reached: Bool)] {
+        let total: Double
+        let elapsed: Double
+
+        if habit.durationType == .indefinite {
+            return []
+        }
+
+        let targetDate: Date = {
+            if let t = habit.targetDate { return t }
+            let calendar = Calendar.current
+            let dur = habit.textCounterDuration
+            switch habit.timeUnit {
+            case .seconds: return calendar.date(byAdding: .second, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+            case .minutes: return calendar.date(byAdding: .minute, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+            case .hours: return calendar.date(byAdding: .hour, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+            case .days: return calendar.date(byAdding: .day, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+            case .weeks: return calendar.date(byAdding: .weekOfYear, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+            case .months: return calendar.date(byAdding: .month, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+            case .years: return calendar.date(byAdding: .year, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+            }
+        }()
+
+        total = targetDate.timeIntervalSince(habit.referenceDate)
+        elapsed = Date().timeIntervalSince(habit.referenceDate)
+        guard total > 0 else { return [] }
+
+        let currentPercent = min(elapsed / total * 100, 100)
+        let marks: [Int] = [10, 25, 50, 75, 90, 100]
+        return marks.map { pct in
+            ("\(pct)%", Double(pct), currentPercent >= Double(pct))
+        }
+    }
+
+    private var currentPercent: Double {
+        guard let totalInterval = {
+            let targetDate: Date = {
+                if let t = habit.targetDate { return t }
+                let calendar = Calendar.current
+                let dur = habit.textCounterDuration
+                switch habit.timeUnit {
+                case .seconds: return calendar.date(byAdding: .second, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                case .minutes: return calendar.date(byAdding: .minute, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                case .hours: return calendar.date(byAdding: .hour, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                case .days: return calendar.date(byAdding: .day, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                case .weeks: return calendar.date(byAdding: .weekOfYear, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                case .months: return calendar.date(byAdding: .month, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                case .years: return calendar.date(byAdding: .year, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                }
+            }()
+            let total = targetDate.timeIntervalSince(habit.referenceDate)
+            return total > 0 ? total : nil
+        }() else { return 0 }
+        let elapsed = Date().timeIntervalSince(habit.referenceDate)
+        return min(elapsed / totalInterval * 100, 100)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Milestones")
+                .font(.subheadline.weight(.semibold))
+
+            if milestones.isEmpty {
+                Text("No milestones for indefinite habits")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                // Flag milestone design
+                GeometryReader { geo in
+                    let width = geo.size.width
+                    let barY: CGFloat = 70
+                    let flagPoleHeight: CGFloat = 40
+                    let currentPct = currentPercent
+
+                    // Background track
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color(.systemGray5))
+                        .frame(height: 6)
+                        .position(x: width / 2, y: barY)
+
+                    // Fill track
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(habit.color.gradient)
+                        .frame(width: width * CGFloat(currentPct / 100), height: 6)
+                        .position(x: width * CGFloat(currentPct / 100) / 2, y: barY)
+
+                    // Flag markers
+                    ForEach(Array(milestones.enumerated()), id: \.offset) { _, milestone in
+                        let x = CGFloat(milestone.percent / 100) * width
+                        let clampedX = min(max(x, 10), width - 10)
+
+                        // Flag pole
+                        Rectangle()
+                            .fill(milestone.reached ? habit.color.color : Color(.systemGray4))
+                            .frame(width: 1.5, height: flagPoleHeight)
+                            .position(x: clampedX, y: barY - flagPoleHeight / 2)
+
+                        // Flag pennant
+                        FlagShape()
+                            .fill(milestone.reached ? habit.color.gradient : LinearGradient(colors: [Color(.systemGray4)], startPoint: .leading, endPoint: .trailing))
+                            .frame(width: 16, height: 12)
+                            .shadow(color: milestone.reached ? habit.color.color.opacity(0.4) : .clear, radius: 3, x: 0, y: 1)
+                            .position(x: clampedX + 8.5, y: barY - flagPoleHeight - 1)
+
+                        // Small dot on the bar
+                        Circle()
+                            .fill(milestone.reached ? habit.color.color : Color(.systemGray4))
+                            .frame(width: 8, height: 8)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color(.systemBackground), lineWidth: 1.5)
+                            )
+                            .position(x: clampedX, y: barY)
+
+                        // Label below
+                        Text(milestone.label)
+                            .font(.system(size: 9, weight: milestone.reached ? .semibold : .regular))
+                            .foregroundColor(milestone.reached ? .primary : .secondary)
+                            .position(x: clampedX, y: barY + 14)
+                    }
+                }
+                .frame(height: 100)
+
+                // Time-based stats for text counter
+                HStack(spacing: 16) {
+                    if habit.type == .countdown {
+                        let targetDate: Date = {
+                            if let t = habit.targetDate { return t }
+                            let calendar = Calendar.current
+                            let dur = habit.textCounterDuration
+                            switch habit.timeUnit {
+                            case .seconds: return calendar.date(byAdding: .second, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                            case .minutes: return calendar.date(byAdding: .minute, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                            case .hours: return calendar.date(byAdding: .hour, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                            case .days: return calendar.date(byAdding: .day, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                            case .weeks: return calendar.date(byAdding: .weekOfYear, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                            case .months: return calendar.date(byAdding: .month, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                            case .years: return calendar.date(byAdding: .year, value: dur, to: habit.referenceDate) ?? habit.referenceDate
+                            }
+                        }()
+                        let remaining = targetDate.timeIntervalSince(Date())
+                        let days = max(0, Int(remaining / 86400))
+                        Text("\(days) days remaining")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Flag Pennant Shape
+struct FlagShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.15))
+        path.addLine(to: CGPoint(x: rect.maxX * 0.7, y: rect.midY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - rect.height * 0.15))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
     }
 }
 
