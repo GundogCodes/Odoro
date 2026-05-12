@@ -17,6 +17,26 @@ enum HabitVisualStyle: String, Codable, CaseIterable {
     case grid = "Progress Grid"       // Grid that fills up
     case bar = "Timeline Bar"         // Filling bar
     case text = "Text Counter"        // Day/week/hr/sec text
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case Self.grid.rawValue, "Calendar Heatmap", "Streak Strip":
+            self = .grid
+        case Self.bar.rawValue, "Ring Gauge", "Milestone Ladder":
+            self = .bar
+        case Self.text.rawValue:
+            self = .text
+        default:
+            self = .grid
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 enum HabitTimeUnit: String, Codable, CaseIterable {
@@ -37,9 +57,9 @@ enum TimelineTickUnit: String, Codable, CaseIterable {
     case week = "Weeks"
     case month = "Months"
     case year = "Years"
-    
+
     var displayName: String { rawValue }
-    
+
     var singularName: String {
         switch self {
         case .minute: return "minute"
@@ -56,8 +76,32 @@ enum HabitWidgetSize: String, Codable, CaseIterable {
     case half = "Small"           // Square 4x4 to 7x7
     case fullMedium = "Medium"    // Full width, same height as small
     case full = "Large"           // Full width, taller
-    
+
     var displayName: String { rawValue }
+}
+
+enum PremiumWidgetStyle: String, Codable, CaseIterable, Identifiable {
+    case moduleDeck
+    case signalRing
+    case terminalStack
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .moduleDeck: return "Module Deck"
+        case .signalRing: return "Signal Ring"
+        case .terminalStack: return "Terminal Stack"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .moduleDeck: return "Casio-style panels with segmented progress blocks."
+        case .signalRing: return "Tech ring with compact status modules."
+        case .terminalStack: return "Terminal rows for progress, goal, and ETA."
+        }
+    }
 }
 
 // What each cell in the grid represents
@@ -66,9 +110,9 @@ enum CellUnit: String, Codable, CaseIterable {
     case week = "Week"
     case month = "Month"
     case year = "Year"
-    
+
     var displayName: String { rawValue }
-    
+
     var pluralName: String {
         switch self {
         case .day: return "days"
@@ -84,7 +128,7 @@ enum GridDurationType: String, Codable, CaseIterable {
     case customRange = "Custom Range"
     case toTargetDate = "To Target Date"
     case indefinite = "Indefinite"
-    
+
     var displayName: String {
         switch self {
         case .customRange: return "Custom Range"
@@ -98,14 +142,14 @@ enum GridDurationType: String, Codable, CaseIterable {
 enum BarDurationType: String, Codable, CaseIterable {
     case customRange = "Custom Range"
     case toTargetDate = "To Target Date"
-    
+
     var displayName: String {
         switch self {
         case .customRange: return "Custom Range"
         case .toTargetDate: return "To Target Date"
         }
     }
-    
+
     var toGridDurationType: GridDurationType {
         switch self {
         case .customRange: return .customRange
@@ -147,6 +191,7 @@ struct Habit: Identifiable, Codable {
     var type: HabitType
     var updateMode: HabitUpdateMode
     var visualStyle: HabitVisualStyle
+    var premiumWidgetStyle: PremiumWidgetStyle?
     var widgetSize: HabitWidgetSize
 
     // Grid settings
@@ -178,19 +223,20 @@ struct Habit: Identifiable, Codable {
     var color: HabitColor
 
     var createdAt: Date
-    
+
     // Start date is always creation date (today when created)
     var startDate: Date { createdAt }
 
     // Reference date for elapsed time calculations (respects reset)
     var referenceDate: Date { lastResetDate ?? createdAt }
-    
+
     init(
         name: String,
         icon: String = "target",
         type: HabitType = .countUp,
         updateMode: HabitUpdateMode = .auto,
         visualStyle: HabitVisualStyle = .grid,
+        premiumWidgetStyle: PremiumWidgetStyle? = nil,
         widgetSize: HabitWidgetSize = .full,
         cellUnit: CellUnit = .day,
         durationType: GridDurationType = .customRange,
@@ -207,6 +253,7 @@ struct Habit: Identifiable, Codable {
         self.type = type
         self.updateMode = updateMode
         self.visualStyle = visualStyle
+        self.premiumWidgetStyle = premiumWidgetStyle
         self.widgetSize = widgetSize
         self.cellUnit = cellUnit
         self.durationType = durationType
@@ -240,6 +287,7 @@ struct Habit: Identifiable, Codable {
         type = try container.decodeIfPresent(HabitType.self, forKey: .type) ?? .countUp
         updateMode = try container.decodeIfPresent(HabitUpdateMode.self, forKey: .updateMode) ?? .auto
         visualStyle = try container.decodeIfPresent(HabitVisualStyle.self, forKey: .visualStyle) ?? .grid
+        premiumWidgetStyle = try container.decodeIfPresent(PremiumWidgetStyle.self, forKey: .premiumWidgetStyle)
         widgetSize = try container.decodeIfPresent(HabitWidgetSize.self, forKey: .widgetSize) ?? .full
         cellUnit = try container.decodeIfPresent(CellUnit.self, forKey: .cellUnit) ?? .day
         durationType = try container.decodeIfPresent(GridDurationType.self, forKey: .durationType) ?? .customRange
@@ -266,7 +314,7 @@ struct Habit: Identifiable, Codable {
     var currentCellIndex: Int {
         let calendar = Calendar.current
         let now = Date()
-        
+
         switch cellUnit {
         case .day:
             return max(0, calendar.dateComponents([.day], from: startDate, to: now).day ?? 0)
@@ -279,7 +327,7 @@ struct Habit: Identifiable, Codable {
             return max(0, calendar.dateComponents([.year], from: startDate, to: now).year ?? 0)
         }
     }
-    
+
     // Maximum cells each size can display
     var maxCellCapacity: Int {
         switch widgetSize {
@@ -288,7 +336,7 @@ struct Habit: Identifiable, Codable {
         case .full: return 210        // 15x14
         }
     }
-    
+
     // Total duration in cell units (actual full duration, not capped)
     var totalDurationCells: Int {
         switch durationType {
@@ -312,64 +360,64 @@ struct Habit: Identifiable, Codable {
             return maxCellCapacity
         }
     }
-    
+
     // Calculate which "page" of the grid we're on and cells for that page
     var gridPageInfo: (currentPage: Int, totalPages: Int, cellsInCurrentPage: Int, filledInCurrentPage: Int) {
         let totalDuration = totalDurationCells
         let capacity = maxCellCapacity
-        let elapsed = elapsedCells
-        
+        let elapsed = updateMode == .manual ? currentCellIndex : elapsedCells
+
         if totalDuration <= capacity {
             // Fits in one grid
             return (0, 1, totalDuration, min(elapsed, totalDuration))
         }
-        
+
         // Multiple pages needed
         let totalPages = Int(ceil(Double(totalDuration) / Double(capacity)))
         let currentPage = min(elapsed / capacity, totalPages - 1)
-        
+
         // Cells in current page
         let cellsBeforeThisPage = currentPage * capacity
         let remainingCells = totalDuration - cellsBeforeThisPage
         let cellsInCurrentPage = min(remainingCells, capacity)
-        
+
         // Filled cells in current page
         let elapsedInCurrentPage = elapsed - cellsBeforeThisPage
         let filledInCurrentPage = max(0, min(elapsedInCurrentPage, cellsInCurrentPage))
-        
+
         return (currentPage, totalPages, cellsInCurrentPage, filledInCurrentPage)
     }
-    
+
     // Goal cell index within current page (nil for indefinite duration)
     var goalCellIndexInCurrentPage: Int? {
         // No goal cell for indefinite duration
         guard durationType != .indefinite else { return nil }
-        
+
         let pageInfo = gridPageInfo
-        
+
         // Goal cell only appears on the last page
         guard pageInfo.currentPage == pageInfo.totalPages - 1 else { return nil }
-        
+
         // Goal cell is the last cell in the current page
         return pageInfo.cellsInCurrentPage - 1
     }
-    
+
     // Whether the habit goal has been reached
     var isGoalReached: Bool {
-        guard durationType != .indefinite else { return false }
-        return elapsedCells >= totalDurationCells
+        guard let progress = styleProgressPercentage() else { return false }
+        return progress >= 100
     }
-    
+
     // Elapsed cells (time passed)
     var elapsedCells: Int {
         if updateMode == .manual {
             return currentValue
         }
-        
+
         let calendar = Calendar.current
         let now = Date()
         let referenceDate = lastResetDate ?? startDate
-        
+
         switch cellUnit {
         case .day:
             return max(0, calendar.dateComponents([.day], from: referenceDate, to: now).day ?? 0)
@@ -382,66 +430,66 @@ struct Habit: Identifiable, Codable {
             return max(0, calendar.dateComponents([.year], from: referenceDate, to: now).year ?? 0)
         }
     }
-    
+
     // Calculate total cells based on settings (for current grid page)
     var totalCells: Int {
         return gridPageInfo.cellsInCurrentPage
     }
-    
+
     // Grid dimensions based on widget size and total cells
     // Cells will resize to fill the available space
     var gridDimensions: (columns: Int, rows: Int) {
         let total = totalCells
-        
+
         switch widgetSize {
         case .half:
             // Small: Square-ish, max 7x7
             let maxCols = 7
             let maxRows = 7
-            
+
             // Try to make it as square as possible
             let side = Int(ceil(sqrt(Double(total))))
             let cols = min(side, maxCols)
             let rows = Int(ceil(Double(total) / Double(cols)))
             return (cols, min(rows, maxRows))
-            
+
         case .fullMedium:
             // Medium: Wide rectangle, max 15x7
             // Aim for roughly 2:1 aspect ratio (width:height)
             let maxCols = 15
             let maxRows = 7
-            
+
             // Calculate ideal dimensions for ~2:1 ratio
             // cols ≈ 2 * rows, cols * rows ≈ total
             // So rows ≈ sqrt(total/2), cols ≈ 2*rows
             let idealRows = max(1, Int(ceil(sqrt(Double(total) / 2.0))))
             let idealCols = Int(ceil(Double(total) / Double(idealRows)))
-            
+
             let cols = min(idealCols, maxCols)
             let rows = min(Int(ceil(Double(total) / Double(cols))), maxRows)
             return (cols, rows)
-            
+
         case .full:
             // Large: Wide rectangle, max 15x14
             // Aim for roughly 1:1 to 2:1 ratio
             let maxCols = 15
             let maxRows = 14
-            
+
             let idealRows = max(1, Int(ceil(sqrt(Double(total) / 1.5))))
             let idealCols = Int(ceil(Double(total) / Double(idealRows)))
-            
+
             let cols = min(idealCols, maxCols)
             let rows = min(Int(ceil(Double(total) / Double(cols))), maxRows)
             return (cols, rows)
         }
     }
-    
+
     // Actual cell count to display (grid might have extra slots)
     var displayCellCount: Int {
         let dims = gridDimensions
         return min(totalCells, dims.columns * dims.rows)
     }
-    
+
     // Current filled cells for display
     func filledCells(at date: Date = Date()) -> Int {
         return gridPageInfo.filledInCurrentPage
@@ -465,6 +513,195 @@ struct Habit: Identifiable, Codable {
             return max(0, totalCells - filled)
         }
         return filled
+    }
+
+    func styleTargetDate(from reference: Date? = nil) -> Date? {
+        let ref = reference ?? referenceDate
+
+        if durationType == .toTargetDate, let targetDate {
+            return targetDate
+        }
+
+        switch visualStyle {
+        case .grid:
+            guard durationType != .indefinite else { return nil }
+            return date(byAdding: cellUnit, value: customDuration, to: ref)
+        case .bar:
+            return date(byAdding: timelineTickUnit, value: timelineDuration, to: ref)
+        case .text:
+            return date(byAdding: timeUnit, value: textCounterDuration, to: ref)
+        }
+    }
+
+    func styleProgressUnits(at date: Date = Date()) -> (elapsed: Int, total: Int)? {
+        switch visualStyle {
+        case .grid:
+            guard durationType != .indefinite else { return nil }
+            let total = max(1, totalDurationCells)
+            let elapsed = updateMode == .manual ? manuallyFilledCells.count : elapsedCells
+            return (min(max(elapsed, 0), total), total)
+        case .bar:
+            let total: Int
+            if durationType == .toTargetDate, let targetDate {
+                total = max(1, unitsBetween(from: referenceDate, to: targetDate, unit: timelineTickUnit))
+            } else {
+                total = max(1, timelineDuration)
+            }
+            let elapsed = unitsBetween(from: referenceDate, to: date, unit: timelineTickUnit)
+            return (min(max(elapsed, 0), total), total)
+        case .text:
+            let total: Int
+            if durationType == .toTargetDate, let targetDate {
+                total = max(1, unitsBetween(from: referenceDate, to: targetDate, unit: timeUnit))
+            } else {
+                total = max(1, textCounterDuration)
+            }
+            let elapsed = unitsBetween(from: referenceDate, to: date, unit: timeUnit)
+            return (min(max(elapsed, 0), total), total)
+        }
+    }
+
+    func styleProgressPercentage(at date: Date = Date()) -> Double? {
+        guard let units = styleProgressUnits(at: date), units.total > 0 else { return nil }
+        return min(max(Double(units.elapsed) / Double(units.total) * 100, 0), 100)
+    }
+
+    var styleProjectedEndDescription: String {
+        guard let targetDate = styleTargetDate() else { return "—" }
+        guard targetDate > Date() else { return "Reached" }
+
+        switch visualStyle {
+        case .text:
+            return targetDate.formatted(date: .abbreviated, time: .shortened)
+        case .bar:
+            switch timelineTickUnit {
+            case .minute, .hour:
+                return targetDate.formatted(date: .abbreviated, time: .shortened)
+            case .day, .week, .month, .year:
+                return targetDate.formatted(date: .abbreviated, time: .omitted)
+            }
+        case .grid:
+            return targetDate.formatted(date: .abbreviated, time: .omitted)
+        }
+    }
+
+    var styleGoalSummary: String {
+        switch visualStyle {
+        case .grid:
+            switch durationType {
+            case .customRange:
+                return "\(totalDurationCells) \(cellUnit.pluralName)"
+            case .toTargetDate:
+                if let targetDate {
+                    return "Until \(targetDate.formatted(date: .abbreviated, time: .omitted))"
+                }
+                return "\(totalDurationCells) \(cellUnit.pluralName)"
+            case .indefinite:
+                return "Repeating \(maxCellCapacity)-cell cycle"
+            }
+        case .bar:
+            if durationType == .toTargetDate, let targetDate {
+                return "Until \(targetDate.formatted(date: .abbreviated, time: .shortened))"
+            }
+            return "\(timelineDuration) \(timelineTickUnit.displayName.lowercased())"
+        case .text:
+            if durationType == .toTargetDate, let targetDate {
+                return "Until \(targetDate.formatted(date: .abbreviated, time: .shortened))"
+            }
+            return "\(textCounterDuration) \(timeUnit.rawValue.lowercased())"
+        }
+    }
+
+    private func date(byAdding unit: CellUnit, value: Int, to date: Date) -> Date? {
+        let calendar = Calendar.current
+        switch unit {
+        case .day:
+            return calendar.date(byAdding: .day, value: value, to: date)
+        case .week:
+            return calendar.date(byAdding: .weekOfYear, value: value, to: date)
+        case .month:
+            return calendar.date(byAdding: .month, value: value, to: date)
+        case .year:
+            return calendar.date(byAdding: .year, value: value, to: date)
+        }
+    }
+
+    private func date(byAdding unit: TimelineTickUnit, value: Int, to date: Date) -> Date? {
+        let calendar = Calendar.current
+        switch unit {
+        case .minute:
+            return calendar.date(byAdding: .minute, value: value, to: date)
+        case .hour:
+            return calendar.date(byAdding: .hour, value: value, to: date)
+        case .day:
+            return calendar.date(byAdding: .day, value: value, to: date)
+        case .week:
+            return calendar.date(byAdding: .weekOfYear, value: value, to: date)
+        case .month:
+            return calendar.date(byAdding: .month, value: value, to: date)
+        case .year:
+            return calendar.date(byAdding: .year, value: value, to: date)
+        }
+    }
+
+    private func date(byAdding unit: HabitTimeUnit, value: Int, to date: Date) -> Date? {
+        let calendar = Calendar.current
+        switch unit {
+        case .seconds:
+            return calendar.date(byAdding: .second, value: value, to: date)
+        case .minutes:
+            return calendar.date(byAdding: .minute, value: value, to: date)
+        case .hours:
+            return calendar.date(byAdding: .hour, value: value, to: date)
+        case .days:
+            return calendar.date(byAdding: .day, value: value, to: date)
+        case .weeks:
+            return calendar.date(byAdding: .weekOfYear, value: value, to: date)
+        case .months:
+            return calendar.date(byAdding: .month, value: value, to: date)
+        case .years:
+            return calendar.date(byAdding: .year, value: value, to: date)
+        }
+    }
+
+    private func unitsBetween(from startDate: Date, to endDate: Date, unit: TimelineTickUnit) -> Int {
+        let calendar = Calendar.current
+        switch unit {
+        case .minute:
+            return calendar.dateComponents([.minute], from: startDate, to: endDate).minute ?? 0
+        case .hour:
+            return calendar.dateComponents([.hour], from: startDate, to: endDate).hour ?? 0
+        case .day:
+            return calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+        case .week:
+            let days = calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+            return days / 7
+        case .month:
+            return calendar.dateComponents([.month], from: startDate, to: endDate).month ?? 0
+        case .year:
+            return calendar.dateComponents([.year], from: startDate, to: endDate).year ?? 0
+        }
+    }
+
+    private func unitsBetween(from startDate: Date, to endDate: Date, unit: HabitTimeUnit) -> Int {
+        let calendar = Calendar.current
+        switch unit {
+        case .seconds:
+            return calendar.dateComponents([.second], from: startDate, to: endDate).second ?? 0
+        case .minutes:
+            return calendar.dateComponents([.minute], from: startDate, to: endDate).minute ?? 0
+        case .hours:
+            return calendar.dateComponents([.hour], from: startDate, to: endDate).hour ?? 0
+        case .days:
+            return calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+        case .weeks:
+            let days = calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+            return days / 7
+        case .months:
+            return calendar.dateComponents([.month], from: startDate, to: endDate).month ?? 0
+        case .years:
+            return calendar.dateComponents([.year], from: startDate, to: endDate).year ?? 0
+        }
     }
 }
 
@@ -582,33 +819,33 @@ func iconDisplayName(for systemName: String) -> String {
 // MARK: - Habit Manager
 class HabitManager: ObservableObject {
     @Published var habits: [Habit] = []
-    
+
     private let saveKey = "savedHabits"
-    
+
     // Computed properties for filtering
     var activeHabits: [Habit] {
         habits.filter { !$0.isCompleted }
     }
-    
+
     var completedHabits: [Habit] {
         habits.filter { $0.isCompleted }.sorted { ($0.completedAt ?? Date()) > ($1.completedAt ?? Date()) }
     }
-    
+
     // Stats for habits
     var totalHabitsCreated: Int {
         habits.count
     }
-    
+
     var totalHabitsCompleted: Int {
         completedHabits.count
     }
-    
+
     var currentStreak: Int {
         // Calculate streak based on consecutive days with at least one habit marked
         let calendar = Calendar.current
         var streak = 0
         var checkDate = calendar.startOfDay(for: Date())
-        
+
         while true {
             let hasActivity = activeHabits.contains { habit in
                 if habit.updateMode == .manual {
@@ -617,39 +854,39 @@ class HabitManager: ObservableObject {
                 }
                 return false
             }
-            
+
             if hasActivity || streak == 0 {
                 if hasActivity { streak += 1 }
                 checkDate = calendar.date(byAdding: .day, value: -1, to: checkDate) ?? checkDate
             } else {
                 break
             }
-            
+
             // Safety limit
             if streak > 365 { break }
         }
-        
+
         return streak
     }
-    
+
     init() {
         load()
         debugWidgetSync()
     }
     func debugWidgetSync() {
         print("🔍 DEBUG: Checking App Group...")
-        
+
         guard let defaults = UserDefaults(suiteName: "group.com.gunisharma.odoro") else {
             print("❌ Cannot access App Group - check App Group is enabled for main app target")
             return
         }
-        
+
         // Try to save
         if let encoded = try? JSONEncoder().encode(habits) {
             defaults.set(encoded, forKey: "sharedHabits")
             print("✅ Saved \(habits.count) habits to App Group (\(encoded.count) bytes)")
         }
-        
+
         // Try to read back
         if let data = defaults.data(forKey: "sharedHabits"),
            let decoded = try? JSONDecoder().decode([Habit].self, from: data) {
@@ -661,7 +898,7 @@ class HabitManager: ObservableObject {
             print("❌ Could not read habits from App Group")
         }
     }
-    
+
     private let backupKey = "habits_backup"
 
     func save() {
@@ -700,24 +937,24 @@ class HabitManager: ObservableObject {
             }
         }
     }
-    
+
     func addHabit(_ habit: Habit) {
         habits.append(habit)
         save()
     }
-    
+
     func deleteHabit(_ habit: Habit) {
         habits.removeAll { $0.id == habit.id }
         save()
     }
-    
+
     func updateHabit(_ habit: Habit) {
         if let index = habits.firstIndex(where: { $0.id == habit.id }) {
             habits[index] = habit
             save()
         }
     }
-    
+
     func completeHabit(_ habit: Habit) {
         if var h = habits.first(where: { $0.id == habit.id }) {
             h.isCompleted = true
@@ -725,7 +962,7 @@ class HabitManager: ObservableObject {
             updateHabit(h)
         }
     }
-    
+
     func uncompleteHabit(_ habit: Habit) {
         if var h = habits.first(where: { $0.id == habit.id }) {
             h.isCompleted = false
@@ -733,26 +970,26 @@ class HabitManager: ObservableObject {
             updateHabit(h)
         }
     }
-    
+
     func incrementProgress(for habit: Habit) {
         if var h = habits.first(where: { $0.id == habit.id }) {
             // Get the current cell index based on elapsed time
             let cellIndex = h.currentCellIndex
             let gridCapacity = h.gridDimensions.columns * h.gridDimensions.rows
-            
+
             // For indefinite habits, wrap the index within current cycle
             let effectiveIndex = h.durationType == .indefinite ? cellIndex % gridCapacity : cellIndex
-            
+
             // Toggle the cell - if already filled, unfill it; otherwise fill it
             if h.manuallyFilledCells.contains(effectiveIndex) {
                 h.manuallyFilledCells.remove(effectiveIndex)
             } else {
                 h.manuallyFilledCells.insert(effectiveIndex)
             }
-            
+
             // Update currentValue to match the count (for compatibility)
             h.currentValue = h.manuallyFilledCells.count
-            
+
             // Handle cycling for indefinite habits
             if h.durationType == .indefinite && effectiveIndex >= gridCapacity - 1 {
                 // Check if we should cycle (all cells in range filled or time moved on)
@@ -763,19 +1000,22 @@ class HabitManager: ObservableObject {
                     h.currentValue = 0
                 }
             }
-            
+
             updateHabit(h)
         }
     }
-    
+
     func resetProgress(for habit: Habit) {
         if var h = habits.first(where: { $0.id == habit.id }) {
             // Record the reset event with current progress snapshot
-            let progressAtReset = h.updateMode == .manual ? h.manuallyFilledCells.count : h.elapsedCells
+            let progressSnapshot = h.styleProgressUnits() ?? (
+                elapsed: h.updateMode == .manual ? h.manuallyFilledCells.count : h.elapsedCells,
+                total: h.totalDurationCells
+            )
             let resetEvent = ResetEvent(
                 date: Date(),
-                progressAtReset: progressAtReset,
-                durationAtReset: h.totalDurationCells
+                progressAtReset: progressSnapshot.elapsed,
+                durationAtReset: progressSnapshot.total
             )
             h.resetHistory.append(resetEvent)
 
@@ -787,7 +1027,7 @@ class HabitManager: ObservableObject {
             updateHabit(h)
         }
     }
-    
+
     // Check all habits and send notifications for newly reached goals
     func checkAndSendGoalNotifications() {
         for habit in habits {
@@ -796,10 +1036,10 @@ class HabitManager: ObservableObject {
                   !habit.isCompleted,
                   habit.durationType != .indefinite,
                   habit.isGoalReached else { continue }
-            
+
             // Send notification
             sendGoalReachedNotification(for: habit)
-            
+
             // Mark as notified
             if var h = habits.first(where: { $0.id == habit.id }) {
                 h.goalNotificationSent = true
@@ -807,27 +1047,27 @@ class HabitManager: ObservableObject {
             }
         }
     }
-    
+
     private func sendGoalReachedNotification(for habit: Habit) {
         let content = UNMutableNotificationContent()
         content.title = "🎉 Goal Reached!"
         content.body = "You've completed your \"\(habit.name)\" goal!"
         content.sound = .default
-        
+
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.5, repeats: false)
         let request = UNNotificationRequest(
             identifier: "goal_reached_\(habit.id.uuidString)",
             content: content,
             trigger: trigger
         )
-        
+
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
                 print("Error sending goal notification: \(error)")
             }
         }
     }
-    
+
     func addNote(to habit: Habit, content: String) {
         if var h = habits.first(where: { $0.id == habit.id }) {
             let note = HabitNote(content: content)
@@ -835,30 +1075,30 @@ class HabitManager: ObservableObject {
             updateHabit(h)
         }
     }
-    
+
     func deleteNote(from habit: Habit, noteID: UUID) {
         if var h = habits.first(where: { $0.id == habit.id }) {
             h.notes.removeAll { $0.id == noteID }
             updateHabit(h)
         }
     }
-    
+
     func moveHabit(from sourceIndex: Int, to destinationIndex: Int) {
         guard sourceIndex != destinationIndex,
               sourceIndex >= 0, sourceIndex < habits.count,
               destinationIndex >= 0, destinationIndex < habits.count else { return }
-        
+
         let habit = habits.remove(at: sourceIndex)
         habits.insert(habit, at: destinationIndex)
         save()
     }
-    
+
     // Move habit by ID - handles filtered lists correctly
     func moveHabitByID(from sourceID: UUID, to targetID: UUID) {
         guard let fromIndex = habits.firstIndex(where: { $0.id == sourceID }),
               let toIndex = habits.firstIndex(where: { $0.id == targetID }),
               fromIndex != toIndex else { return }
-        
+
         let habit = habits.remove(at: fromIndex)
         habits.insert(habit, at: toIndex)
         save()
@@ -868,23 +1108,23 @@ class HabitManager: ObservableObject {
 // MARK: - Tracker Background
 struct TrackerBackground: View {
     @Environment(\.colorScheme) var colorScheme
-    
+
     @State private var wave1FromTop: Bool = false
     @State private var wave2FromTop: Bool = true
     @State private var wave3FromTop: Bool = false
     @State private var speedMultiplier1: Double = 1.0
     @State private var speedMultiplier2: Double = 1.0
     @State private var speedMultiplier3: Double = 1.0
-    
+
     var body: some View {
         TimelineView(.animation(minimumInterval: 1/20)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
-            
+
             GeometryReader { geo in
                 ZStack {
                     if colorScheme == .dark {
                         Color(red: 0.12, green: 0.10, blue: 0.25)
-                        
+
                         HorizontalFluidWave(
                             time: time,
                             fromTop: wave1FromTop,
@@ -894,7 +1134,7 @@ struct TrackerBackground: View {
                             speed: 0.5 * speedMultiplier1,
                             color: Color(red: 0.25, green: 0.20, blue: 0.5)
                         )
-                        
+
                         HorizontalFluidWave(
                             time: time,
                             fromTop: wave2FromTop,
@@ -904,7 +1144,7 @@ struct TrackerBackground: View {
                             speed: 0.65 * speedMultiplier2,
                             color: Color(red: 0.4, green: 0.25, blue: 0.65)
                         )
-                        
+
                         HorizontalFluidWave(
                             time: time,
                             fromTop: wave3FromTop,
@@ -914,10 +1154,10 @@ struct TrackerBackground: View {
                             speed: 0.8 * speedMultiplier3,
                             color: Color(red: 0.55, green: 0.3, blue: 0.75)
                         )
-                        
+
                     } else {
                         Color(red: 0.6, green: 0.7, blue: 0.9)
-                        
+
                         HorizontalFluidWave(
                             time: time,
                             fromTop: wave1FromTop,
@@ -927,7 +1167,7 @@ struct TrackerBackground: View {
                             speed: 0.5 * speedMultiplier1,
                             color: Color(red: 0.4, green: 0.55, blue: 0.85)
                         )
-                        
+
                         HorizontalFluidWave(
                             time: time,
                             fromTop: wave2FromTop,
@@ -937,7 +1177,7 @@ struct TrackerBackground: View {
                             speed: 0.65 * speedMultiplier2,
                             color: Color(red: 0.5, green: 0.45, blue: 0.8)
                         )
-                        
+
                         HorizontalFluidWave(
                             time: time,
                             fromTop: wave3FromTop,
@@ -956,7 +1196,7 @@ struct TrackerBackground: View {
             wave1FromTop = Bool.random()
             wave2FromTop = Bool.random()
             wave3FromTop = Bool.random()
-            
+
             speedMultiplier1 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
             speedMultiplier2 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
             speedMultiplier3 = Double.random(in: 0.85...1.15) * (Bool.random() ? 1 : -1)
@@ -969,19 +1209,19 @@ struct TrackerBackground: View {
 class OrientationManager: ObservableObject {
     static let shared = OrientationManager()
     @Published var isLocked = false
-    
+
     func lockToPortrait() {
         guard !isLocked else { return }
         isLocked = true
         forceOrientationUpdate()
     }
-    
+
     func unlock() {
         guard isLocked else { return }
         isLocked = false
         forceOrientationUpdate()
     }
-    
+
     private func forceOrientationUpdate() {
         DispatchQueue.main.async {
             if #available(iOS 16.0, *) {
@@ -1008,15 +1248,15 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 struct ContributionGridView: View {
     let habit: Habit
     let showFullGrid: Bool  // For detail view
-    
+
     init(habit: Habit, showFullGrid: Bool = false) {
         self.habit = habit
         self.showFullGrid = showFullGrid
     }
-    
+
     private var isSmall: Bool { habit.widgetSize == .half }
     private var isLarge: Bool { habit.widgetSize == .full }
-    
+
     // Fixed card heights - Small/Medium same, Large is 2x
     private var cardHeight: CGFloat {
         switch habit.widgetSize {
@@ -1025,11 +1265,11 @@ struct ContributionGridView: View {
         case .full: return 320
         }
     }
-    
+
     private var dimensions: (columns: Int, rows: Int) {
         habit.gridDimensions
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Header
@@ -1042,13 +1282,13 @@ struct ContributionGridView: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
                 Spacer()
-                
+
                 // Progress label
                 Text(progressLabel)
                     .font(isSmall ? .caption2 : .caption)
                     .foregroundColor(.white.opacity(0.7))
             }
-            
+
             // Grid - takes remaining space
             GridContent(
                 columns: dimensions.columns,
@@ -1076,15 +1316,15 @@ struct ContributionGridView: View {
                 )
         )
     }
-    
+
     private var filledCellsForDisplay: Int {
         return habit.filledCellsForDisplay()
     }
-    
+
     private var progressLabel: String {
         let pageInfo = habit.gridPageInfo
         let totalDuration = habit.totalDurationCells
-        
+
         let unitSuffix: String
         switch habit.cellUnit {
         case .day: unitSuffix = "d"
@@ -1092,7 +1332,7 @@ struct ContributionGridView: View {
         case .month: unitSuffix = "mo"
         case .year: unitSuffix = "y"
         }
-        
+
         if habit.updateMode == .manual {
             // For manual mode, show filled cells / total cells
             let filledCount = habit.manuallyFilledCells.count
@@ -1102,20 +1342,20 @@ struct ContributionGridView: View {
             }
             return "\(filledCount)/\(totalDuration)"
         }
-        
+
         // Auto mode - show elapsed time
         let elapsed = habit.elapsedCells
-        
+
         if habit.durationType == .indefinite {
             let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
             return "\(pageInfo.filledInCurrentPage)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
         }
-        
+
         // Show overall progress + page if multiple pages
         if pageInfo.totalPages > 1 {
             return "\(elapsed)/\(totalDuration)\(unitSuffix) (\(pageInfo.currentPage + 1)/\(pageInfo.totalPages))"
         }
-        
+
         return "\(elapsed)/\(totalDuration)\(unitSuffix)"
     }
 }
@@ -1134,7 +1374,7 @@ struct GridContent: View {
     let currentCellIndex: Int  // Today's cell index
     let goalCellIndex: Int?    // Index of the goal cell (nil for indefinite)
     var pageOffset: Int = 0    // First cell index of current page (for manual mode)
-    
+
     // Beautiful gold color for goal cell
     private let goldColor = Color(red: 1.0, green: 0.84, blue: 0.0)
     private let goldGradient = LinearGradient(
@@ -1145,26 +1385,26 @@ struct GridContent: View {
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
-    
+
     var body: some View {
         GeometryReader { geo in
             let availableWidth = geo.size.width
             let availableHeight = geo.size.height
-            
+
             let totalHSpacing = spacing * CGFloat(columns - 1)
             let totalVSpacing = spacing * CGFloat(rows - 1)
-            
+
             // Calculate cell size to fill available space (cells stretch to fill)
             let cellWidth = (availableWidth - totalHSpacing) / CGFloat(columns)
             let cellHeight = (availableHeight - totalVSpacing) / CGFloat(rows)
             let cornerRadius = min(cellWidth, cellHeight) * 0.15
-            
+
             VStack(spacing: spacing) {
                 ForEach(Array(0..<rows), id: \.self) { row in
                     HStack(spacing: spacing) {
                         ForEach(Array(0..<columns), id: \.self) { col in
                             let cellIndex = (row * columns) + col
-                            
+
                             if cellIndex < totalCells {
                                 // Check if this is the goal cell
                                 if cellIndex == goalCellIndex {
@@ -1191,7 +1431,7 @@ struct GridContent: View {
             }
         }
     }
-    
+
     @ViewBuilder
     private func goalCellView(isFilled: Bool, cornerRadius: CGFloat, width: CGFloat, height: CGFloat) -> some View {
         if isFilled {
@@ -1215,7 +1455,7 @@ struct GridContent: View {
                 .frame(width: width, height: height)
         }
     }
-    
+
     private func cellColor(at index: Int) -> Color {
         if isManualMode {
             // Manual mode: check if this specific cell is in the filled set
@@ -1242,7 +1482,7 @@ struct GridContent: View {
             }
         }
     }
-    
+
     private func isCellFilled(at index: Int) -> Bool {
         if isManualMode {
             // Use absolute index (page offset + local index) for manual mode
@@ -1263,13 +1503,13 @@ struct GridContent: View {
 // MARK: - Text Counter View
 struct TextCounterView: View {
     let habit: Habit
-    
+
     @State private var currentTime = Date()
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    
+
     private var isSmall: Bool { habit.widgetSize == .half }
     private var isLarge: Bool { habit.widgetSize == .full }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: isSmall ? 8 : 12) {
             // Header
@@ -1282,15 +1522,15 @@ struct TextCounterView: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
                 Spacer()
-                
+
                 // Show countdown/countup label
                 Text(habit.type == .countdown ? "remaining" : "elapsed")
                     .font(.caption2)
                     .foregroundColor(.white.opacity(0.5))
             }
-            
+
             Spacer(minLength: 0)
-            
+
             if isSmall {
                 // Small: Show primary unit centered
                 VStack(spacing: 4) {
@@ -1318,11 +1558,11 @@ struct TextCounterView: View {
                     }
                 }
             }
-            
+
             Spacer(minLength: 0)
-            
+
             // Progress indicator
-            if habit.durationType != .indefinite {
+            if habit.durationType != .indefinite || habit.visualStyle == .text {
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 4)
                         .fill(.white.opacity(0.1))
@@ -1350,7 +1590,7 @@ struct TextCounterView: View {
             currentTime = Date()
         }
     }
-    
+
     // Match grid heights - Small/Medium same, Large is 2x
     private var cardHeight: CGFloat {
         switch habit.widgetSize {
@@ -1359,10 +1599,10 @@ struct TextCounterView: View {
         case .full: return 320
         }
     }
-    
+
     // Calculate target date for text counter based on duration and time unit
     private var calculatedTargetDate: Date {
-        if let target = habit.targetDate {
+        if habit.durationType == .toTargetDate, let target = habit.targetDate {
             return target
         }
 
@@ -1410,7 +1650,7 @@ struct TextCounterView: View {
         }
         return progress
     }
-    
+
     private var primaryValue: String {
         let interval = abs(timeInterval)
         switch habit.timeUnit {
@@ -1423,22 +1663,22 @@ struct TextCounterView: View {
         case .years: return String(format: "%.2f", interval / 31536000)
         }
     }
-    
+
     private var primaryLabel: String {
         habit.timeUnit.rawValue.lowercased()
     }
-    
+
     private struct TimeComponent {
         let value: String
         let label: String
     }
-    
+
     // Time components based on the selected time unit
     // If days selected: days:hours:minutes:seconds
     // If years selected: years:months:days:hours:minutes:seconds
     private var timeComponentsForUnit: [TimeComponent] {
         let interval = abs(timeInterval)
-        
+
         let totalSeconds = Int(interval)
         let seconds = totalSeconds % 60
         let totalMinutes = totalSeconds / 60
@@ -1448,39 +1688,39 @@ struct TextCounterView: View {
         let totalDays = totalHours / 24
         let days = totalDays % 7
         let weeks = totalDays / 7
-        
+
         // For months/years, use calendar-based calculation for accuracy
         let calendar = Calendar.current
         let referenceDate = habit.type == .countdown ? currentTime : habit.referenceDate
         let targetForCalc = habit.type == .countdown ? calculatedTargetDate : currentTime
         let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: referenceDate, to: targetForCalc)
-        
+
         let years = abs(components.year ?? 0)
         let months = abs(components.month ?? 0)
         let calendarDays = abs(components.day ?? 0)
         let calendarHours = abs(components.hour ?? 0)
         let calendarMinutes = abs(components.minute ?? 0)
         let calendarSeconds = abs(components.second ?? 0)
-        
+
         switch habit.timeUnit {
         case .seconds:
             return [
                 TimeComponent(value: "\(totalSeconds)", label: "sec")
             ]
-            
+
         case .minutes:
             return [
                 TimeComponent(value: "\(totalMinutes)", label: "min"),
                 TimeComponent(value: String(format: "%02d", seconds), label: "sec")
             ]
-            
+
         case .hours:
             return [
                 TimeComponent(value: "\(totalHours)", label: "hrs"),
                 TimeComponent(value: String(format: "%02d", minutes), label: "min"),
                 TimeComponent(value: String(format: "%02d", seconds), label: "sec")
             ]
-            
+
         case .days:
             return [
                 TimeComponent(value: "\(totalDays)", label: "days"),
@@ -1488,7 +1728,7 @@ struct TextCounterView: View {
                 TimeComponent(value: String(format: "%02d", minutes), label: "min"),
                 TimeComponent(value: String(format: "%02d", seconds), label: "sec")
             ]
-            
+
         case .weeks:
             return [
                 TimeComponent(value: "\(weeks)", label: "wks"),
@@ -1497,7 +1737,7 @@ struct TextCounterView: View {
                 TimeComponent(value: String(format: "%02d", minutes), label: "min"),
                 TimeComponent(value: String(format: "%02d", seconds), label: "sec")
             ]
-            
+
         case .months:
             return [
                 TimeComponent(value: "\(months)", label: "mon"),
@@ -1506,7 +1746,7 @@ struct TextCounterView: View {
                 TimeComponent(value: String(format: "%02d", calendarMinutes), label: "min"),
                 TimeComponent(value: String(format: "%02d", calendarSeconds), label: "sec")
             ]
-            
+
         case .years:
             return [
                 TimeComponent(value: "\(years)", label: "yrs"),
@@ -1523,13 +1763,13 @@ struct TextCounterView: View {
 // MARK: - Timeline Bar View
 struct TimelineBarView: View {
     let habit: Habit
-    
+
     @State private var currentTime = Date()
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    
+
     private var isSmall: Bool { habit.widgetSize == .half }
     private var isLarge: Bool { habit.widgetSize == .full }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: isSmall ? 6 : 10) {
             // Header
@@ -1546,13 +1786,13 @@ struct TimelineBarView: View {
                     .font(.caption2)
                     .foregroundColor(.white.opacity(0.5))
             }
-            
+
             // Time display
             Text(mainTimeDisplay)
                 .font(.system(size: isSmall ? 20 : (isLarge ? 28 : 24), weight: .bold, design: .rounded))
                 .foregroundStyle(habit.color.gradient)
                 .frame(maxWidth: .infinity, alignment: isSmall ? .center : .leading)
-            
+
             // Progress info
             HStack {
                 Text(progressText)
@@ -1563,31 +1803,31 @@ struct TimelineBarView: View {
                     .font(.caption)
                     .foregroundColor(.white.opacity(0.7))
             }
-            
+
             Spacer(minLength: 0)
-            
+
             // Timeline with ticks
             GeometryReader { geo in
                 let tickCount = min(totalTicks, maxVisibleTicks)
                 let tickSpacing = tickCount > 1 ? geo.size.width / CGFloat(tickCount) : geo.size.width
-                
+
                 ZStack(alignment: .leading) {
                     // Background track
                     RoundedRectangle(cornerRadius: 2)
                         .fill(.white.opacity(0.15))
                         .frame(height: isLarge ? 8 : 6)
-                    
+
                     // Progress fill
                     RoundedRectangle(cornerRadius: 2)
                         .fill(habit.color.gradient)
                         .frame(width: geo.size.width * progress, height: isLarge ? 8 : 6)
                         .animation(.easeInOut(duration: 0.3), value: progress)
-                    
+
                     // Tick marks
                     ForEach(0..<tickCount + 1, id: \.self) { index in
                         let xPosition = CGFloat(index) * tickSpacing
                         let isFilled = isTickFilled(index: index, totalTicks: tickCount)
-                        
+
                         Rectangle()
                             .fill(isFilled ? habit.color.color : .white.opacity(0.3))
                             .frame(width: isLarge ? 2 : 1.5, height: isLarge ? 20 : 16)
@@ -1597,7 +1837,7 @@ struct TimelineBarView: View {
                 .frame(height: isLarge ? 20 : 16)
             }
             .frame(height: isLarge ? 20 : 16)
-            
+
             // Tick labels (only show a few key labels)
             if !isSmall {
                 HStack {
@@ -1616,7 +1856,7 @@ struct TimelineBarView: View {
                         .foregroundColor(.white.opacity(0.5))
                 }
             }
-            
+
             Spacer(minLength: 0)
         }
         .padding(12)
@@ -1633,7 +1873,7 @@ struct TimelineBarView: View {
             currentTime = Date()
         }
     }
-    
+
     // Match grid heights
     private var cardHeight: CGFloat {
         switch habit.widgetSize {
@@ -1642,7 +1882,7 @@ struct TimelineBarView: View {
         case .full: return 320
         }
     }
-    
+
     // Maximum visible ticks based on widget size
     private var maxVisibleTicks: Int {
         switch habit.widgetSize {
@@ -1651,13 +1891,13 @@ struct TimelineBarView: View {
         case .full: return 30
         }
     }
-    
+
     // Calculate target date based on timeline settings
     private var calculatedTargetDate: Date {
-        if let target = habit.targetDate {
+        if habit.durationType == .toTargetDate, let target = habit.targetDate {
             return target
         }
-        
+
         let calendar = Calendar.current
         let duration = habit.timelineDuration
         let ref = habit.referenceDate
@@ -1681,9 +1921,9 @@ struct TimelineBarView: View {
     // Total number of ticks (total duration in tick units)
     private var totalTicks: Int {
         if habit.durationType == .toTargetDate, let target = habit.targetDate {
-            return calculateTicksBetween(from: habit.referenceDate, to: target)
+            return max(1, calculateTicksBetween(from: habit.referenceDate, to: target))
         }
-        return habit.timelineDuration
+        return max(1, habit.timelineDuration)
     }
 
     // Elapsed ticks
@@ -1691,10 +1931,10 @@ struct TimelineBarView: View {
         let ticks = calculateTicksBetween(from: habit.referenceDate, to: currentTime)
         return min(max(0, ticks), totalTicks)
     }
-    
+
     private func calculateTicksBetween(from startDate: Date, to endDate: Date) -> Int {
         let calendar = Calendar.current
-        
+
         switch habit.timelineTickUnit {
         case .minute:
             return calendar.dateComponents([.minute], from: startDate, to: endDate).minute ?? 0
@@ -1711,13 +1951,13 @@ struct TimelineBarView: View {
             return calendar.dateComponents([.year], from: startDate, to: endDate).year ?? 0
         }
     }
-    
+
     // Progress (0-1)
     private var progress: CGFloat {
         guard totalTicks > 0 else { return 0 }
         let rawProgress = CGFloat(elapsedTicks) / CGFloat(totalTicks)
         let clampedProgress = min(max(rawProgress, 0), 1)
-        
+
         // For countdown: start full, decrease over time
         // For count up: start empty, increase over time
         if habit.type == .countdown {
@@ -1725,11 +1965,11 @@ struct TimelineBarView: View {
         }
         return clampedProgress
     }
-    
+
     private func isTickFilled(index: Int, totalTicks: Int) -> Bool {
         guard totalTicks > 0 else { return false }
         let tickProgress = CGFloat(index) / CGFloat(totalTicks)
-        
+
         if habit.type == .countdown {
             // Countdown: ticks after the remaining time are empty
             return tickProgress >= (1.0 - progress)
@@ -1738,7 +1978,7 @@ struct TimelineBarView: View {
             return tickProgress <= progress
         }
     }
-    
+
     private var progressText: String {
         if habit.type == .countdown {
             String(format: "%.1f%% remaining", progress * 100)
@@ -1746,28 +1986,28 @@ struct TimelineBarView: View {
             String(format: "%.1f%% complete", progress * 100)
         }
     }
-    
+
     private var startLabel: String {
         let formatter = DateFormatter()
         formatter.dateFormat = habit.timelineTickUnit == .minute || habit.timelineTickUnit == .hour ? "MMM d, h:mm a" : "MMM d"
         return formatter.string(from: habit.referenceDate)
     }
-    
+
     private var middleLabel: String {
         let midTicks = totalTicks / 2
         return "\(midTicks) \(habit.timelineTickUnit.displayName.lowercased())"
     }
-    
+
     private var endLabel: String {
         let formatter = DateFormatter()
         formatter.dateFormat = habit.timelineTickUnit == .minute || habit.timelineTickUnit == .hour ? "MMM d, h:mm a" : "MMM d"
         return formatter.string(from: calculatedTargetDate)
     }
-    
+
     private var mainTimeDisplay: String {
         let remaining = totalTicks - elapsedTicks
         let displayValue = habit.type == .countdown ? remaining : elapsedTicks
-        
+
         // Show in the same unit as the tick
         switch habit.timelineTickUnit {
         case .minute:
@@ -1811,36 +2051,45 @@ struct TimelineBarView: View {
     }
 }
 
+private enum AddHabitPreviewMode: String, CaseIterable {
+    case habitStyles = "Habit Styles"
+    case premiumWidgets = "Premium Widgets"
+}
+
 // MARK: - Add Habit Sheet
 struct AddHabitSheet: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var habitManager: HabitManager
-    
+    @ObservedObject var settings: AppSettings
+
     @State private var name = ""
     @State private var icon = "target"
     @State private var habitType: HabitType = .countUp
     @State private var updateMode: HabitUpdateMode = .auto
     @State private var visualStyle: HabitVisualStyle = .grid
     @State private var widgetSize: HabitWidgetSize = .full
-    
+
     // Grid settings
     @State private var cellUnit: CellUnit = .day
     @State private var durationType: GridDurationType = .customRange
     @State private var customDuration: Int = 30
     @State private var targetDate = Calendar.current.date(byAdding: .day, value: 30, to: Date()) ?? Date()
-    
+
     // Timeline bar settings
     @State private var barDurationType: BarDurationType = .customRange
     @State private var timelineTickUnit: TimelineTickUnit = .day
     @State private var timelineDuration: Int = 30
-    
+
     // Display settings
     @State private var timeUnit: HabitTimeUnit = .days
     @State private var color: HabitColor = .blue
     @State private var textCounterDuration: Int = 30
-    
+
+    @State private var previewMode: AddHabitPreviewMode = .habitStyles
     @State private var currentPreviewPage = 0
-    
+    @State private var currentPremiumPreviewPage = 0
+    @State private var selectedPremiumWidgetStyle: PremiumWidgetStyle?
+
     // Duration range for text counter based on time unit
     private var textCounterDurationRange: ClosedRange<Int> {
         switch timeUnit {
@@ -1853,7 +2102,7 @@ struct AddHabitSheet: View {
         case .years: return 1...100
         }
     }
-    
+
     // Description of display format based on time unit
     private var timeUnitDisplayFormatDescription: String {
         switch timeUnit {
@@ -1873,7 +2122,7 @@ struct AddHabitSheet: View {
             return "Displays: years : months : days : hours : minutes : seconds"
         }
     }
-    
+
     // Duration range for timeline based on tick unit
     private var timelineDurationRange: ClosedRange<Int> {
         switch timelineTickUnit {
@@ -1885,27 +2134,68 @@ struct AddHabitSheet: View {
         case .year: return 1...100       // up to 100 years
         }
     }
-    
+
     // Description of timeline preview
     private var timelinePreviewDescription: String {
-        let tickLabel = timelineTickUnit.displayName.lowercased()
         if barDurationType == .customRange {
             return "Timeline with \(timelineDuration) ticks, each representing 1 \(timelineTickUnit.singularName)"
         } else {
             return "Timeline to target date, each tick represents 1 \(timelineTickUnit.singularName)"
         }
     }
-    
-    // Display name for current style in preview header
-    private var currentStyleDisplayName: String {
-        let style = HabitVisualStyle.allCases[currentPreviewPage]
-        switch style {
-        case .grid: return "Grid"
-        case .text: return "Timer"
-        case .bar: return "Timeline"
+
+    // Display name for current preview header
+    private var currentPreviewTitle: String {
+        switch previewMode {
+        case .habitStyles:
+            let style = HabitVisualStyle.allCases[currentPreviewPage]
+            switch style {
+            case .grid: return "Grid"
+            case .bar: return "Timeline"
+            case .text: return "Timer"
+            }
+        case .premiumWidgets:
+            return PremiumWidgetStyle.allCases[currentPremiumPreviewPage].displayName
         }
     }
-    
+
+    private var currentPreviewSubtitle: String {
+        switch previewMode {
+        case .habitStyles:
+            return "This controls the habit card style inside Odoro."
+        case .premiumWidgets:
+            return PremiumWidgetStyle.allCases[currentPremiumPreviewPage].subtitle
+        }
+    }
+
+    private var selectedHabitStyleName: String {
+        switch visualStyle {
+        case .grid: return "Grid"
+        case .bar: return "Timeline"
+        case .text: return "Timer"
+        }
+    }
+
+    private var activePreviewPage: Int {
+        previewMode == .habitStyles ? currentPreviewPage : currentPremiumPreviewPage
+    }
+
+    private var isPremiumPreviewMode: Bool {
+        previewMode == .premiumWidgets
+    }
+
+    private var previewCarouselHeight: CGFloat {
+        isPremiumPreviewMode ? 248 : 200
+    }
+
+    private var currentPremiumStyle: PremiumWidgetStyle {
+        PremiumWidgetStyle.allCases[currentPremiumPreviewPage]
+    }
+
+    private var selectedPremiumWidgetStyleLabel: String {
+        selectedPremiumWidgetStyle?.displayName ?? "Base Tracker Card"
+    }
+
     // Minimum target date (4 units from now)
     private var minimumTargetDate: Date {
         let calendar = Calendar.current
@@ -1920,7 +2210,7 @@ struct AddHabitSheet: View {
             return calendar.date(byAdding: .year, value: 4, to: Date()) ?? Date()
         }
     }
-    
+
     // Range limits for custom duration
     private var customDurationRange: ClosedRange<Int> {
         switch cellUnit {
@@ -1930,81 +2220,222 @@ struct AddHabitSheet: View {
         case .year: return 4...50
         }
     }
-    
+
     private let icons = habitIconCatalog
-    
+
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 28) {
-                    // Style Preview Carousel
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(currentStyleDisplayName)
-                                .font(.title2.bold())
-                                .foregroundColor(.primary)
-                            
-                            Spacer()
-                            
-                            // Swipe indicator
-                            HStack(spacing: 4) {
-                                ForEach(0..<HabitVisualStyle.allCases.count, id: \.self) { index in
-                                    Circle()
-                                        .fill(index == currentPreviewPage ? color.color : Color.secondary.opacity(0.3))
-                                        .frame(width: 6, height: 6)
+            ZStack {
+                (isPremiumPreviewMode ? Color.black : Color(.systemGroupedBackground))
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 28) {
+                        // Style Preview Carousel
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(currentPreviewTitle)
+                                        .font(.title2.bold())
+                                        .foregroundColor(.primary)
+                                    Text(currentPreviewSubtitle)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Spacer()
+
+                                // Swipe indicator
+                                HStack(spacing: 4) {
+                                    ForEach(0..<(previewMode == .habitStyles ? HabitVisualStyle.allCases.count : PremiumWidgetStyle.allCases.count), id: \.self) { index in
+                                        Circle()
+                                            .fill(activePreviewPage == index ? color.color : Color.secondary.opacity(0.3))
+                                            .frame(width: 6, height: 6)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
+                            .animation(.easeInOut(duration: 0.2), value: currentPreviewPage)
+                            .animation(.easeInOut(duration: 0.2), value: currentPremiumPreviewPage)
+
+                            Picker("", selection: $previewMode) {
+                                ForEach(AddHabitPreviewMode.allCases, id: \.self) { mode in
+                                    Text(mode.rawValue).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .padding(.horizontal)
+
+                            Group {
+                                if previewMode == .habitStyles {
+                                    TabView(selection: $currentPreviewPage) {
+                                        ForEach(Array(HabitVisualStyle.allCases.enumerated()), id: \.element) { index, style in
+                                            PreviewCard(style: style, habit: previewHabit(for: style))
+                                                .tag(index)
+                                        }
+                                    }
+                                    .onChange(of: currentPreviewPage) { _, newValue in
+                                        visualStyle = HabitVisualStyle.allCases[newValue]
+                                    }
+                                } else {
+                                    TabView(selection: $currentPremiumPreviewPage) {
+                                        ForEach(PremiumWidgetStyle.allCases) { style in
+                                            PremiumWidgetCardView(
+                                                style: style,
+                                                habit: previewHabit(for: visualStyle),
+                                                isUnlocked: settings.premiumUnlocked
+                                            )
+                                            .tag(style.id)
+                                        }
+                                    }
+                                    .onChange(of: currentPremiumPreviewPage) { _, newValue in
+                                        selectedPremiumWidgetStyle = PremiumWidgetStyle.allCases[newValue]
+                                    }
+                                }
+                            }
+                            .tabViewStyle(.page(indexDisplayMode: .never))
+                            .frame(height: previewCarouselHeight)
+
+                            if previewMode == .premiumWidgets {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack(alignment: .top, spacing: 10) {
+                                        Image(systemName: settings.premiumUnlocked ? "checkmark.seal.fill" : "sparkles")
+                                            .foregroundColor(settings.premiumUnlocked ? .green : color.color)
+                                            .font(.title3)
+
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(settings.premiumUnlocked ? "Premium Home Screen Widgets Unlocked" : "Premium Home Screen Widgets")
+                                                .font(.subheadline.weight(.semibold))
+                                            Text("Tracker card selection: \(selectedPremiumWidgetStyleLabel). Your habit logic and analytics still use the \(selectedHabitStyleName) base style. Home screen widgets are still chosen from iPhone's widget editor.")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+
+                                    if !settings.premiumUnlocked {
+                                        Text("Until premium unlock succeeds, Tracker will keep showing the base \(selectedHabitStyleName) card.")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+
+                                    HStack(spacing: 10) {
+                                        Text("Selected")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundColor(.secondary)
+                                        Text(selectedPremiumWidgetStyleLabel)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundColor(color.color)
+                                        Spacer()
+                                        if selectedPremiumWidgetStyle != nil {
+                                            Button("Use Base Card") {
+                                                selectedPremiumWidgetStyle = nil
+                                            }
+                                            .font(.caption.weight(.semibold))
+                                        }
+                                    }
+
+                                    if !settings.premiumUnlocked {
+                                        HStack(spacing: 10) {
+                                            Button {
+                                                Task { await settings.purchasePremiumLifetime() }
+                                            } label: {
+                                                HStack(spacing: 8) {
+                                                    if settings.isPurchasingPremium {
+                                                        ProgressView()
+                                                            .tint(.white)
+                                                    } else {
+                                                        Image(systemName: "creditcard.fill")
+                                                    }
+                                                    Text("Unlock \(settings.premiumPriceLabel)")
+                                                }
+                                                .font(.subheadline.bold())
+                                                .foregroundColor(.white)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 12)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 12)
+                                                        .fill(color.color.opacity(0.85))
+                                                )
+                                            }
+                                            .disabled(settings.isPurchasingPremium || settings.isRestoringPurchases)
+
+                                            Button {
+                                                Task { await settings.restorePremiumPurchases() }
+                                            } label: {
+                                                HStack(spacing: 8) {
+                                                    if settings.isRestoringPurchases {
+                                                        ProgressView()
+                                                            .tint(.primary)
+                                                    } else {
+                                                        Image(systemName: "arrow.clockwise")
+                                                    }
+                                                    Text("Restore")
+                                                }
+                                                .font(.subheadline.bold())
+                                                .foregroundColor(.primary)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 12)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 12)
+                                                        .fill(Color(.secondarySystemGroupedBackground))
+                                                )
+                                            }
+                                            .disabled(settings.isPurchasingPremium || settings.isRestoringPurchases)
+                                        }
+                                    }
+
+                                    if let premiumStatusMessage = settings.premiumStatusMessage {
+                                        Text(premiumStatusMessage)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                }
+                            }
+                            .onAppear {
+                                if selectedPremiumWidgetStyle == nil {
+                                    selectedPremiumWidgetStyle = currentPremiumStyle
+                                }
+                            }
+                            .padding(14)
+                            .background(Color(.secondarySystemGroupedBackground))
+                            .cornerRadius(12)
+                                .padding(.horizontal)
+                            }
+                        }
+
+                        // Name & Icon Section
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Name & Icon")
+                                .font(.headline)
+
+                            TextField("Habit name", text: $name)
+                                .padding(12)
+                                .background(Color(.secondarySystemGroupedBackground))
+                                .cornerRadius(10)
+
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
+                                ForEach(icons, id: \.systemName) { habitIcon in
+                                    Button {
+                                        icon = habitIcon.systemName
+                                    } label: {
+                                        Image(systemName: habitIcon.systemName)
+                                            .font(.title3)
+                                            .foregroundColor(icon == habitIcon.systemName ? color.color : .secondary)
+                                            .frame(width: 40, height: 40)
+                                            .background(
+                                                Circle()
+                                                    .fill(icon == habitIcon.systemName ? color.color.opacity(0.2) : Color(.secondarySystemGroupedBackground))
+                                            )
+                                    }
                                 }
                             }
                         }
                         .padding(.horizontal)
-                        .animation(.easeInOut(duration: 0.2), value: currentPreviewPage)
-                        
-                        TabView(selection: $currentPreviewPage) {
-                            ForEach(Array(HabitVisualStyle.allCases.enumerated()), id: \.element) { index, style in
-                                PreviewCard(style: style, habit: previewHabit(for: style))
-                                    .tag(index)
-                            }
-                        }
-                        .tabViewStyle(.page(indexDisplayMode: .never))
-                        .frame(height: 200)
-                        .onChange(of: currentPreviewPage) { _, newValue in
-                            visualStyle = HabitVisualStyle.allCases[newValue]
-                        }
-                    }
-                    
-                    // Name & Icon Section
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Name & Icon")
-                            .font(.headline)
-                        
-                        TextField("Habit name", text: $name)
-                            .padding(12)
-                            .background(Color(.secondarySystemGroupedBackground))
-                            .cornerRadius(10)
-                        
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
-                            ForEach(icons, id: \.systemName) { habitIcon in
-                                Button {
-                                    icon = habitIcon.systemName
-                                } label: {
-                                    Image(systemName: habitIcon.systemName)
-                                        .font(.title3)
-                                        .foregroundColor(icon == habitIcon.systemName ? color.color : .secondary)
-                                        .frame(width: 40, height: 40)
-                                        .background(
-                                            Circle()
-                                                .fill(icon == habitIcon.systemName ? color.color.opacity(0.2) : Color(.secondarySystemGroupedBackground))
-                                        )
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                    
+
                     // Tracking Type Section
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Tracking Type")
                             .font(.headline)
-                        
+
                         VStack(spacing: 12) {
                             Picker("Type", selection: $habitType) {
                                 ForEach(HabitType.allCases, id: \.self) { type in
@@ -2012,14 +2443,14 @@ struct AddHabitSheet: View {
                                 }
                             }
                             .pickerStyle(.segmented)
-                            
-                            // Manual mode only available for grid style
+
+                            // Manual mode is available for grid habits.
                             if visualStyle == .grid {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Update Mode")
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
-                                    
+
                                     Picker("Update Mode", selection: $updateMode) {
                                         ForEach(HabitUpdateMode.allCases, id: \.self) { mode in
                                             Text(mode.rawValue).tag(mode)
@@ -2035,18 +2466,22 @@ struct AddHabitSheet: View {
                         if newStyle != .grid {
                             updateMode = .auto
                         }
-                        // Reset duration type for bar (no indefinite)
                         if newStyle == .bar && durationType == .indefinite {
                             durationType = .customRange
                         }
                     }
-                    
-                    // Grid Settings Section
+                    .onChange(of: previewMode) { _, newMode in
+                        if newMode == .premiumWidgets && selectedPremiumWidgetStyle == nil {
+                            selectedPremiumWidgetStyle = currentPremiumStyle
+                        }
+                    }
+
+                    // Grid settings
                     if visualStyle == .grid {
                         VStack(alignment: .leading, spacing: 16) {
                             Text("Grid Settings")
                                 .font(.headline)
-                            
+
                             VStack(spacing: 16) {
                                 // Cell unit
                                 HStack {
@@ -2064,13 +2499,13 @@ struct AddHabitSheet: View {
                                 .padding(14)
                                 .background(Color(.secondarySystemGroupedBackground))
                                 .cornerRadius(10)
-                                
+
                                 // Duration type
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Duration")
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
-                                    
+
                                     Picker("Duration", selection: $durationType) {
                                         ForEach(GridDurationType.allCases, id: \.self) { type in
                                             Text(type.displayName).tag(type)
@@ -2078,7 +2513,7 @@ struct AddHabitSheet: View {
                                     }
                                     .pickerStyle(.segmented)
                                 }
-                                
+
                                 // Duration value input
                                 switch durationType {
                                 case .customRange:
@@ -2094,7 +2529,7 @@ struct AddHabitSheet: View {
                                     .padding(14)
                                     .background(Color(.secondarySystemGroupedBackground))
                                     .cornerRadius(10)
-                                    
+
                                 case .toTargetDate:
                                     DatePicker(
                                         "End Date",
@@ -2110,7 +2545,7 @@ struct AddHabitSheet: View {
                                             targetDate = minimumTargetDate
                                         }
                                     }
-                                    
+
                                 case .indefinite:
                                     HStack {
                                         Image(systemName: "arrow.trianglehead.2.counterclockwise.rotate.90")
@@ -2127,20 +2562,20 @@ struct AddHabitSheet: View {
                         }
                         .padding(.horizontal)
                     }
-                    
-                    // Timeline Bar Settings Section
+
+                    // Timeline settings
                     if visualStyle == .bar {
                         VStack(alignment: .leading, spacing: 16) {
                             Text("Timeline Settings")
                                 .font(.headline)
-                            
+
                             VStack(spacing: 16) {
                                 // Duration type
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Duration Type")
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
-                                    
+
                                     Picker("Duration", selection: $barDurationType) {
                                         ForEach(BarDurationType.allCases, id: \.self) { type in
                                             Text(type.displayName).tag(type)
@@ -2151,7 +2586,7 @@ struct AddHabitSheet: View {
                                         durationType = newValue.toGridDurationType
                                     }
                                 }
-                                
+
                                 // Tick unit - what each tick represents
                                 HStack {
                                     Text("Each tick represents")
@@ -2168,7 +2603,7 @@ struct AddHabitSheet: View {
                                 .padding(14)
                                 .background(Color(.secondarySystemGroupedBackground))
                                 .cornerRadius(10)
-                                
+
                                 // Duration value
                                 switch barDurationType {
                                 case .customRange:
@@ -2184,7 +2619,7 @@ struct AddHabitSheet: View {
                                     .padding(14)
                                     .background(Color(.secondarySystemGroupedBackground))
                                     .cornerRadius(10)
-                                    
+
                                 case .toTargetDate:
                                     DatePicker(
                                         "Target Date",
@@ -2196,13 +2631,13 @@ struct AddHabitSheet: View {
                                     .background(Color(.secondarySystemGroupedBackground))
                                     .cornerRadius(10)
                                 }
-                                
+
                                 // Preview info
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text("Timeline Preview")
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
-                                    
+
                                     Text(timelinePreviewDescription)
                                         .font(.caption)
                                         .foregroundColor(.secondary)
@@ -2215,20 +2650,20 @@ struct AddHabitSheet: View {
                         }
                         .padding(.horizontal)
                     }
-                    
+
                     // Text Counter Settings
                     if visualStyle == .text {
                         VStack(alignment: .leading, spacing: 16) {
                             Text("Counter Settings")
                                 .font(.headline)
-                            
+
                             VStack(spacing: 16) {
                                 // Duration type
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Duration Type")
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
-                                    
+
                                     Picker("Duration", selection: $barDurationType) {
                                         ForEach(BarDurationType.allCases, id: \.self) { type in
                                             Text(type.displayName).tag(type)
@@ -2239,7 +2674,7 @@ struct AddHabitSheet: View {
                                         durationType = newValue.toGridDurationType
                                     }
                                 }
-                                
+
                                 // Time range selection - determines display format
                                 HStack {
                                     Text("Time Range")
@@ -2256,7 +2691,7 @@ struct AddHabitSheet: View {
                                 .padding(14)
                                 .background(Color(.secondarySystemGroupedBackground))
                                 .cornerRadius(10)
-                                
+
                                 // Duration value
                                 switch barDurationType {
                                 case .customRange:
@@ -2272,7 +2707,7 @@ struct AddHabitSheet: View {
                                     .padding(14)
                                     .background(Color(.secondarySystemGroupedBackground))
                                     .cornerRadius(10)
-                                    
+
                                 case .toTargetDate:
                                     DatePicker(
                                         "Target Date",
@@ -2284,13 +2719,13 @@ struct AddHabitSheet: View {
                                     .background(Color(.secondarySystemGroupedBackground))
                                     .cornerRadius(10)
                                 }
-                                
+
                                 // Display format preview
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text("Display Format")
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
-                                    
+
                                     Text(timeUnitDisplayFormatDescription)
                                         .font(.caption)
                                         .foregroundColor(.secondary)
@@ -2303,12 +2738,12 @@ struct AddHabitSheet: View {
                         }
                         .padding(.horizontal)
                     }
-                    
+
                     // Widget Size Section
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Widget Size")
                             .font(.headline)
-                        
+
                         Picker("Widget Size", selection: $widgetSize) {
                             ForEach(HabitWidgetSize.allCases, id: \.self) { size in
                                 Text(size.displayName).tag(size)
@@ -2317,12 +2752,12 @@ struct AddHabitSheet: View {
                         .pickerStyle(.segmented)
                     }
                     .padding(.horizontal)
-                    
+
                     // Color Section
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Color")
                             .font(.headline)
-                        
+
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 14) {
                             ForEach(HabitColor.allCases, id: \.self) { c in
                                 Button {
@@ -2341,12 +2776,13 @@ struct AddHabitSheet: View {
                         }
                     }
                     .padding(.horizontal)
-                    
-                    Spacer(minLength: 20)
+
+                        Spacer(minLength: 20)
+                    }
+                    .padding(.vertical)
                 }
-                .padding(.vertical)
             }
-            .background(Color(.systemGroupedBackground))
+            .preferredColorScheme(isPremiumPreviewMode ? .dark : nil)
             .navigationTitle("New Habit")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -2364,26 +2800,28 @@ struct AddHabitSheet: View {
             }
         }
     }
-    
+
     private func previewHabit(for style: HabitVisualStyle) -> Habit {
+        let previewDurationType = style == .bar || style == .text ? barDurationType.toGridDurationType : durationType
         var habit = Habit(
             name: name.isEmpty ? "My Habit" : name,
             icon: icon,
             type: habitType,
             updateMode: style == .grid ? updateMode : .auto,
             visualStyle: style,
+            premiumWidgetStyle: selectedPremiumWidgetStyle,
             widgetSize: .full,
             cellUnit: cellUnit,
-            durationType: style == .bar || style == .text ? barDurationType.toGridDurationType : durationType,
+            durationType: previewDurationType,
             customDuration: customDuration,
-            targetDate: (durationType == .toTargetDate || barDurationType == .toTargetDate) ? targetDate : nil,
+            targetDate: previewDurationType == .toTargetDate ? targetDate : nil,
             textCounterDuration: textCounterDuration,
             timelineTickUnit: timelineTickUnit,
             timelineDuration: timelineDuration,
             timeUnit: timeUnit,
             color: color
         )
-        
+
         // Set sample progress for preview (about 1/3 filled)
         if habit.updateMode == .manual {
             // For manual mode, fill some specific cells
@@ -2395,10 +2833,10 @@ struct AddHabitSheet: View {
         } else {
             habit.currentValue = habit.totalDurationCells / 3
         }
-        
+
         return habit
     }
-    
+
     private func addHabit() {
         let finalDurationType = (visualStyle == .bar || visualStyle == .text) ? barDurationType.toGridDurationType : durationType
         let habit = Habit(
@@ -2407,11 +2845,12 @@ struct AddHabitSheet: View {
             type: habitType,
             updateMode: visualStyle == .grid ? updateMode : .auto,
             visualStyle: visualStyle,
+            premiumWidgetStyle: selectedPremiumWidgetStyle,
             widgetSize: widgetSize,
             cellUnit: cellUnit,
             durationType: finalDurationType,
             customDuration: customDuration,
-            targetDate: (finalDurationType == .toTargetDate || habitType == .countdown) ? targetDate : nil,
+            targetDate: finalDurationType == .toTargetDate ? targetDate : nil,
             textCounterDuration: textCounterDuration,
             timelineTickUnit: timelineTickUnit,
             timelineDuration: timelineDuration,
@@ -2426,7 +2865,7 @@ struct AddHabitSheet: View {
 struct PreviewCard: View {
     let style: HabitVisualStyle
     let habit: Habit
-    
+
     var body: some View {
         ZStack {
             // Dark background to match tracker view
@@ -2438,7 +2877,7 @@ struct PreviewCard: View {
                         endPoint: .bottomTrailing
                     )
                 )
-            
+
             // Preview content - use half size widget which is 160pt tall
             Group {
                 switch style {
@@ -2455,7 +2894,7 @@ struct PreviewCard: View {
         }
         .padding(.horizontal, 20)
     }
-    
+
     // Create preview habit with small (half) size - fits nicely in preview
     private var previewHabit: Habit {
         var h = habit
@@ -2464,15 +2903,259 @@ struct PreviewCard: View {
     }
 }
 
+private struct PremiumWidgetCardView: View {
+    let style: PremiumWidgetStyle
+    let habit: Habit
+    let isUnlocked: Bool
+    var layoutSize: HabitWidgetSize = .fullMedium
+    var contextLabel: String = "HOME"
+    var showUnlockState: Bool = true
+    var horizontalPadding: CGFloat = 20
+
+    private var accent: Color { habit.color.color }
+    private var isCompact: Bool { layoutSize == .half }
+    private var isLarge: Bool { layoutSize == .full }
+
+    private var cardHeight: CGFloat {
+        switch layoutSize {
+        case .half, .fullMedium: return 160
+        case .full: return 320
+        }
+    }
+
+    private var progressPercent: Int {
+        Int(round(habit.styleProgressPercentage() ?? 72))
+    }
+
+    private var shortGoal: String {
+        switch habit.visualStyle {
+        case .grid:
+            return "\(habit.totalDurationCells)\(habit.cellUnit == .day ? "D" : habit.cellUnit == .week ? "W" : habit.cellUnit == .month ? "M" : "Y")"
+        case .bar:
+            return "\(habit.timelineDuration)\(habit.timelineTickUnit == .minute ? "M" : habit.timelineTickUnit == .hour ? "H" : habit.timelineTickUnit == .day ? "D" : habit.timelineTickUnit == .week ? "W" : habit.timelineTickUnit == .month ? "MO" : "Y")"
+        case .text:
+            return "\(habit.textCounterDuration)\(habit.timeUnit == .seconds ? "S" : habit.timeUnit == .minutes ? "M" : habit.timeUnit == .hours ? "H" : habit.timeUnit == .days ? "D" : habit.timeUnit == .weeks ? "W" : habit.timeUnit == .months ? "MO" : "Y")"
+        }
+    }
+
+    private var shortEnd: String {
+        if let targetDate = habit.styleTargetDate() {
+            return targetDate.formatted(.dateTime.month(.abbreviated).day())
+        }
+        return "LIVE"
+    }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16)
+                .fill(
+                    LinearGradient(
+                        colors: [Color(red: 0.08, green: 0.1, blue: 0.14), Color(red: 0.12, green: 0.14, blue: 0.18)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(accent.opacity(0.35), lineWidth: 1)
+                )
+
+            VStack(alignment: .leading, spacing: isCompact ? 8 : 10) {
+                HStack(spacing: 8) {
+                    Text(style.displayName.uppercased())
+                        .font(.system(size: isCompact ? 11 : 12, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.92))
+                    Spacer()
+                    if showUnlockState {
+                        Text(isUnlocked ? "READY" : "LOCKED")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(isUnlocked ? accent : .white.opacity(0.55))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill((isUnlocked ? accent : .white).opacity(0.12))
+                            )
+                    } else {
+                        Text(contextLabel)
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: habit.icon)
+                        .font(.system(size: isCompact ? 12 : 13, weight: .semibold))
+                        .foregroundColor(accent)
+                    Text((habit.name.isEmpty ? "MY HABIT" : habit.name).uppercased())
+                        .font(.system(size: isCompact ? 12 : 13, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    Spacer()
+                    if showUnlockState {
+                        Text(contextLabel)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+                }
+
+                Group {
+                    switch style {
+                    case .moduleDeck:
+                        moduleDeck
+                    case .signalRing:
+                        signalRing
+                    case .terminalStack:
+                        terminalStack
+                    }
+                }
+            }
+            .padding(isCompact ? 12 : 16)
+        }
+        .frame(height: cardHeight)
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, 10)
+    }
+
+    private var moduleDeck: some View {
+        VStack(spacing: 10) {
+            if isCompact {
+                HStack(spacing: 8) {
+                    moduleCell("PRG", "\(progressPercent)%")
+                    moduleCell("GOAL", shortGoal)
+                }
+                moduleCell("ETA", shortEnd.uppercased())
+            } else {
+                HStack(spacing: 8) {
+                    moduleCell("PRG", "\(progressPercent)%")
+                    moduleCell("GOAL", shortGoal)
+                    moduleCell("ETA", shortEnd.uppercased())
+                }
+            }
+
+            HStack(spacing: 4) {
+                ForEach(0..<(isCompact ? 12 : 16), id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Double(index) / Double(isCompact ? 12 : 16) < Double(progressPercent) / 100.0 ? accent : .white.opacity(0.12))
+                        .frame(height: isCompact ? 10 : 12)
+                }
+            }
+        }
+    }
+
+    private var signalRing: some View {
+        Group {
+            if isCompact {
+                VStack(spacing: 8) {
+                    signalRingGauge(size: 72, lineWidth: 9, valueFontSize: 17)
+                    HStack(spacing: 8) {
+                        moduleCell("MODE", habit.type == .countdown ? "DOWN" : "UP")
+                        moduleCell("TRACK", habit.visualStyle == .grid ? "GRID" : habit.visualStyle == .bar ? "TLINE" : "TIMER")
+                    }
+                }
+            } else {
+                HStack(spacing: isLarge ? 16 : 12) {
+                    signalRingGauge(size: isLarge ? 98 : 84, lineWidth: isLarge ? 12 : 10, valueFontSize: isLarge ? 20 : 18)
+
+                    VStack(spacing: 6) {
+                        moduleCell("MODE", habit.type == .countdown ? "COUNTDN" : "COUNTUP")
+                        moduleCell("TRACK", habit.visualStyle == .grid ? "GRID" : habit.visualStyle == .bar ? "TIMELN" : "TIMER")
+                        moduleCell("SYNC", "WIDGET")
+                    }
+                }
+            }
+        }
+    }
+
+    private var terminalStack: some View {
+        VStack(spacing: 8) {
+            terminalRow("PROG", "\(progressPercent)% TRACKED")
+            terminalRow("GOAL", habit.styleGoalSummary.uppercased())
+            terminalRow("ETA", shortEnd.uppercased())
+        }
+    }
+
+    private func moduleCell(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: isCompact ? 8 : 9, weight: .medium, design: .monospaced))
+                .foregroundColor(.white.opacity(0.5))
+            Text(value)
+                .font(.system(size: isCompact ? 12 : 14, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, isCompact ? 8 : 10)
+        .padding(.vertical, isCompact ? 8 : 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(accent.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+
+    private func terminalRow(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 8) {
+            Text("[\(label)]")
+                .font(.system(size: isCompact ? 10 : 11, weight: .bold, design: .monospaced))
+                .foregroundColor(accent)
+                .frame(width: isCompact ? 48 : 54, alignment: .leading)
+            Text(value)
+                .font(.system(size: isCompact ? 11 : 12, weight: .semibold, design: .monospaced))
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, isCompact ? 8 : 10)
+        .padding(.vertical, isCompact ? 8 : 9)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+
+    private func signalRingGauge(size: CGFloat, lineWidth: CGFloat, valueFontSize: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .stroke(.white.opacity(0.12), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: CGFloat(progressPercent) / 100)
+                .stroke(accent, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
+                .rotationEffect(.degrees(-90))
+
+            VStack(spacing: 2) {
+                Text("\(progressPercent)")
+                    .font(.system(size: valueFontSize, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+                Text("SIG")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.55))
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 // MARK: - Add Note Sheet
 struct AddNoteSheet: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var habitManager: HabitManager
     let habit: Habit
-    
+
     @State private var noteContent = ""
     @FocusState private var isFocused: Bool
-    
+
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
@@ -2481,20 +3164,20 @@ struct AddNoteSheet: View {
                     Image(systemName: habit.icon)
                         .font(.title2)
                         .foregroundColor(habit.color.color)
-                    
+
                     Text(habit.name)
                         .font(.headline)
-                    
+
                     Spacer()
                 }
                 .padding(.horizontal)
-                
+
                 // Note input
                 VStack(alignment: .leading, spacing: 8) {
                     Text("What's on your mind?")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    
+
                     TextEditor(text: $noteContent)
                         .frame(minHeight: 150)
                         .padding(12)
@@ -2503,7 +3186,7 @@ struct AddNoteSheet: View {
                         .focused($isFocused)
                 }
                 .padding(.horizontal)
-                
+
                 // Timestamp preview
                 HStack {
                     Image(systemName: "clock")
@@ -2514,7 +3197,7 @@ struct AddNoteSheet: View {
                     Spacer()
                 }
                 .padding(.horizontal)
-                
+
                 Spacer()
             }
             .padding(.top)
@@ -2549,14 +3232,14 @@ struct NotesListSheet: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var habitManager: HabitManager
     let habit: Habit
-    
+
     @State private var showAddNote = false
-    
+
     // Get fresh habit data
     private var currentHabit: Habit {
         habitManager.habits.first { $0.id == habit.id } ?? habit
     }
-    
+
     var body: some View {
         NavigationView {
             Group {
@@ -2565,11 +3248,11 @@ struct NotesListSheet: View {
                         Image(systemName: "note.text")
                             .font(.system(size: 50))
                             .foregroundColor(.secondary.opacity(0.5))
-                        
+
                         Text("No Notes Yet")
                             .font(.headline)
                             .foregroundColor(.secondary)
-                        
+
                         Button {
                             showAddNote = true
                         } label: {
@@ -2584,7 +3267,7 @@ struct NotesListSheet: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(note.content)
                                     .font(.body)
-                                
+
                                 HStack {
                                     Image(systemName: "clock")
                                         .font(.caption2)
@@ -2632,6 +3315,7 @@ struct NotesListSheet: View {
 struct HabitDetailSheet: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var habitManager: HabitManager
+    @ObservedObject var settings: AppSettings
     @State var habit: Habit
     @State private var showAddNote = false
     @State private var showNotesList = false
@@ -2641,410 +3325,656 @@ struct HabitDetailSheet: View {
     @State private var previousStyle: HabitVisualStyle?
     @State private var suppressStyleChange = false
     @State private var showResetConfirmation = false
+    @State private var selectedPage = 0
+    @State private var currentPremiumPreviewPage = 0
+
+    private var activeTrackerPremiumStyle: PremiumWidgetStyle? {
+        settings.premiumUnlocked ? habit.premiumWidgetStyle : nil
+    }
 
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Habit Preview (all visual styles)
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color(red: 0.15, green: 0.12, blue: 0.3), Color(red: 0.2, green: 0.15, blue: 0.35)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
+            VStack(spacing: 12) {
+                Picker("", selection: $selectedPage) {
+                    Text("Details").tag(0)
+                    Text("Analytics").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.top, 8)
+                .disabled(isEditMode)
+
+                TabView(selection: $selectedPage) {
+                    ScrollView {
+                        VStack(spacing: 20) {
+                            // Habit Preview (all visual styles)
+                            if let premiumStyle = activeTrackerPremiumStyle {
+                                PremiumWidgetCardView(
+                                    style: premiumStyle,
+                                    habit: habit,
+                                    isUnlocked: true,
+                                    layoutSize: .fullMedium,
+                                    contextLabel: "TRACK",
+                                    showUnlockState: false,
+                                    horizontalPadding: 0
                                 )
-                            )
-
-                        switch habit.visualStyle {
-                        case .grid:
-                            ContributionGridView(habit: habit, showFullGrid: true)
-                                .padding(12)
-                        case .text:
-                            TextCounterView(habit: habit)
-                                .padding(12)
-                        case .bar:
-                            TimelineBarView(habit: habit)
-                                .padding(12)
-                        }
-                    }
-                    .padding(.horizontal)
-                    
-                    // Settings List
-                    VStack(spacing: 0) {
-                        // Info Section
-                        SettingsSection(title: "Info") {
-                            if isEditMode {
-                                // Editable name
-                                HStack {
-                                    Text("Name")
-                                    Spacer()
-                                    TextField("Habit name", text: $habit.name)
-                                        .multilineTextAlignment(.trailing)
-                                        .foregroundColor(.blue)
-                                }
                                 .padding(.horizontal)
-                                .padding(.vertical, 12)
-                                .background(Color(.secondarySystemGroupedBackground))
-
-                                // Editable icon
-                                HStack {
-                                    Text("Icon")
-                                    Spacer()
-                                    Menu {
-                                        ForEach(habitIconCatalog, id: \.systemName) { habitIcon in
-                                            Button {
-                                                habit.icon = habitIcon.systemName
-                                            } label: {
-                                                Label(habitIcon.displayName, systemImage: habitIcon.systemName)
-                                            }
-                                        }
-                                    } label: {
-                                        Image(systemName: habit.icon)
-                                            .font(.title3)
-                                            .foregroundColor(habit.color.color)
-                                    }
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 12)
-                                .background(Color(.secondarySystemGroupedBackground))
-
-                                // Editable color
-                                HStack {
-                                    Text("Color")
-                                    Spacer()
-                                    Picker("", selection: $habit.color) {
-                                        ForEach(HabitColor.allCases, id: \.self) { color in
-                                            HStack {
-                                                Circle().fill(color.color).frame(width: 12, height: 12)
-                                                Text(color.rawValue.capitalized)
-                                            }.tag(color)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 12)
-                                .background(Color(.secondarySystemGroupedBackground))
-
-                                // Editable type
-                                HStack {
-                                    Text("Type")
-                                    Spacer()
-                                    Picker("", selection: $habit.type) {
-                                        ForEach(HabitType.allCases, id: \.self) { type in
-                                            Text(type.rawValue).tag(type)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 12)
-                                .background(Color(.secondarySystemGroupedBackground))
-
-                                // Editable update mode
-                                HStack {
-                                    Text("Update Mode")
-                                    Spacer()
-                                    Picker("", selection: $habit.updateMode) {
-                                        ForEach(HabitUpdateMode.allCases, id: \.self) { mode in
-                                            Text(mode.rawValue).tag(mode)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 12)
-                                .background(Color(.secondarySystemGroupedBackground))
-
-                                // Editable cell unit
-                                HStack {
-                                    Text("Cell Unit")
-                                    Spacer()
-                                    Picker("", selection: $habit.cellUnit) {
-                                        ForEach(CellUnit.allCases, id: \.self) { unit in
-                                            Text(unit.displayName).tag(unit)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 12)
-                                .background(Color(.secondarySystemGroupedBackground))
-
-                                // Editable duration type
-                                HStack {
-                                    Text("Duration")
-                                    Spacer()
-                                    Picker("", selection: $habit.durationType) {
-                                        ForEach(GridDurationType.allCases, id: \.self) { type in
-                                            Text(type.displayName).tag(type)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 12)
-                                .background(Color(.secondarySystemGroupedBackground))
-
-                                // Custom duration (if applicable)
-                                if habit.durationType == .customRange {
-                                    HStack {
-                                        Text("Duration Value")
-                                        Spacer()
-                                        TextField("", value: $habit.customDuration, format: .number)
-                                            .keyboardType(.numberPad)
-                                            .multilineTextAlignment(.trailing)
-                                            .foregroundColor(.blue)
-                                            .frame(width: 60)
-                                        Text(habit.cellUnit.pluralName)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 12)
-                                    .background(Color(.secondarySystemGroupedBackground))
-                                }
-
-                                // Target date (if applicable)
-                                if habit.durationType == .toTargetDate {
-                                    HStack {
-                                        Text("Target Date")
-                                        Spacer()
-                                        DatePicker("", selection: Binding(
-                                            get: { habit.targetDate ?? Date() },
-                                            set: { habit.targetDate = $0 }
-                                        ), displayedComponents: .date)
-                                        .datePickerStyle(.compact)
-                                    }
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 12)
-                                    .background(Color(.secondarySystemGroupedBackground))
-                                }
-
-                                // Start date
-                                HStack {
-                                    Text("Start Date")
-                                    Spacer()
-                                    DatePicker("", selection: $habit.createdAt, displayedComponents: .date)
-                                        .datePickerStyle(.compact)
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 12)
-                                .background(Color(.secondarySystemGroupedBackground))
-
                             } else {
-                                // Read-only mode
-                                SettingsRow(label: "Name", value: habit.name)
-                                SettingsRow(label: "Type", value: habit.type.rawValue)
-                                SettingsRow(label: "Started", value: habit.startDate.formatted(date: .abbreviated, time: .omitted))
-                                SettingsRow(label: "Cell Unit", value: "1 \(habit.cellUnit.displayName)")
-                                SettingsRow(label: "Total Duration", value: "\(habit.totalDurationCells) \(habit.cellUnit.pluralName)")
-                                SettingsRow(label: "Current Grid", value: "\(habit.gridDimensions.columns) × \(habit.gridDimensions.rows)")
-                                if habit.gridPageInfo.totalPages > 1 {
-                                    SettingsRow(label: "Grid Page", value: "\(habit.gridPageInfo.currentPage + 1) of \(habit.gridPageInfo.totalPages)")
-                                }
-                            }
-                        }
-                        
-                        // Progress Section (only for manual grid habits)
-                        if habit.updateMode == .manual && habit.visualStyle == .grid {
-                            SettingsSection(title: "Progress") {
-                                HStack {
-                                    Text("Cells Filled")
-                                    Spacer()
-                                    Text("\(habit.manuallyFilledCells.count) / \(habit.totalDurationCells)")
-                                        .foregroundColor(.secondary)
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 12)
-                                .background(Color(.secondarySystemGroupedBackground))
-                                
-                                HStack {
-                                    Text("Current Cell")
-                                    Spacer()
-                                    Text("\(habit.cellUnit.displayName) \(habit.currentCellIndex + 1)")
-                                        .foregroundColor(.secondary)
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 12)
-                                .background(Color(.secondarySystemGroupedBackground))
-                                
-                                Button {
-                                    habitManager.incrementProgress(for: habit)
-                                    if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
-                                        habit = updated
-                                    }
-                                } label: {
-                                    HStack {
-                                        let isTodayFilled = habit.manuallyFilledCells.contains(habit.currentCellIndex)
-                                        Image(systemName: isTodayFilled ? "checkmark.circle.fill" : "plus.circle.fill")
-                                        Text(isTodayFilled ? "Unmark Today" : "Mark Today Complete")
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                                }
-                                .background(Color(.secondarySystemGroupedBackground))
-                            }
-                        }
-                        
-                        // Appearance Section
-                        SettingsSection(title: "Appearance") {
-                            HStack {
-                                Text("Widget Size")
-                                Spacer()
-                                Picker("", selection: $habit.widgetSize) {
-                                    ForEach(HabitWidgetSize.allCases, id: \.self) { size in
-                                        Text(size.rawValue).tag(size)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-                            .padding(.horizontal)
-                            .padding(.vertical, 12)
-                            .background(Color(.secondarySystemGroupedBackground))
-                            
-                            HStack {
-                                Text("Visual Style")
-                                Spacer()
-                                Picker("", selection: $habit.visualStyle) {
-                                    ForEach(HabitVisualStyle.allCases, id: \.self) { style in
-                                        Text(style.rawValue).tag(style)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-                            .padding(.horizontal)
-                            .padding(.vertical, 12)
-                            .background(Color(.secondarySystemGroupedBackground))
-                        }
-                        
-                        // Analytics Section
-                        HabitAnalyticsSection(habit: habit)
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 20)
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [Color(red: 0.15, green: 0.12, blue: 0.3), Color(red: 0.2, green: 0.15, blue: 0.35)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
 
-                        // Notes Section
-                        SettingsSection(title: "Notes & Journey (\(habit.notes.count))") {
-                            // Add note button
-                            Button {
-                                showAddNote = true
-                            } label: {
-                                HStack {
-                                    Image(systemName: "plus.circle.fill")
-                                        .foregroundColor(.blue)
-                                    Text("Add Note")
-                                    Spacer()
+                                    switch habit.visualStyle {
+                                    case .grid:
+                                        ContributionGridView(habit: habit, showFullGrid: true)
+                                            .padding(12)
+                                    case .text:
+                                        TextCounterView(habit: habit)
+                                            .padding(12)
+                                    case .bar:
+                                        TimelineBarView(habit: habit)
+                                            .padding(12)
+                                    }
                                 }
                                 .padding(.horizontal)
-                                .padding(.vertical, 12)
                             }
-                            .background(Color(.secondarySystemGroupedBackground))
-                            
-                            // Recent notes preview (show last 3)
-                            if !habit.notes.isEmpty {
-                                ForEach(habit.notes.prefix(3)) { note in
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(note.content)
-                                            .font(.subheadline)
-                                            .lineLimit(2)
-                                        
-                                        Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 10)
-                                    .background(Color(.secondarySystemGroupedBackground))
-                                }
-                                
-                                // View all button if more than 3 notes
-                                if habit.notes.count > 3 {
-                                    Button {
-                                        showNotesList = true
-                                    } label: {
-                                        HStack {
-                                            Text("View All Notes")
-                                            Spacer()
-                                            Text("\(habit.notes.count)")
-                                                .foregroundColor(.secondary)
-                                            Image(systemName: "chevron.right")
+
+                            if settings.premiumUnlocked {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            let currentStyle = PremiumWidgetStyle.allCases[currentPremiumPreviewPage]
+                                            Text("Premium Card Preview")
+                                                .font(.headline)
+                                            Text(currentStyle.displayName + " • " + currentStyle.subtitle)
                                                 .font(.caption)
                                                 .foregroundColor(.secondary)
                                         }
+
+                                        Spacer()
+
+                                        HStack(spacing: 4) {
+                                            ForEach(0..<PremiumWidgetStyle.allCases.count, id: \.self) { index in
+                                                Circle()
+                                                    .fill(index == currentPremiumPreviewPage ? habit.color.color : Color.secondary.opacity(0.3))
+                                                    .frame(width: 6, height: 6)
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal)
+
+                                    TabView(selection: $currentPremiumPreviewPage) {
+                                        ForEach(Array(PremiumWidgetStyle.allCases.enumerated()), id: \.element) { index, style in
+                                            PremiumWidgetCardView(
+                                                style: style,
+                                                habit: habit,
+                                                isUnlocked: true
+                                            )
+                                            .tag(index)
+                                        }
+                                    }
+                                    .tabViewStyle(.page(indexDisplayMode: .never))
+                                    .frame(height: 248)
+
+                                    Text("Swiping here previews the premium tracker cards. Use the Tracker Card setting below to keep one active. Cycle All Habits is still selected from the home screen widget editor as the widget source.")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
                                         .padding(.horizontal)
+                                }
+                            }
+
+                            // Settings List
+                            VStack(spacing: 0) {
+                                // Info Section
+                                SettingsSection(title: "Info") {
+                                    if isEditMode {
+                                        // Editable name
+                                        HStack {
+                                            Text("Name")
+                                            Spacer()
+                                            TextField("Habit name", text: $habit.name)
+                                                .multilineTextAlignment(.trailing)
+                                                .foregroundColor(.blue)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                        .background(Color(.secondarySystemGroupedBackground))
+
+                                        // Editable icon
+                                        HStack {
+                                            Text("Icon")
+                                            Spacer()
+                                            Menu {
+                                                ForEach(habitIconCatalog, id: \.systemName) { habitIcon in
+                                                    Button {
+                                                        habit.icon = habitIcon.systemName
+                                                    } label: {
+                                                        Label(habitIcon.displayName, systemImage: habitIcon.systemName)
+                                                    }
+                                                }
+                                            } label: {
+                                                Image(systemName: habit.icon)
+                                                    .font(.title3)
+                                                    .foregroundColor(habit.color.color)
+                                            }
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                        .background(Color(.secondarySystemGroupedBackground))
+
+                                        // Editable color
+                                        HStack {
+                                            Text("Color")
+                                            Spacer()
+                                            Picker("", selection: $habit.color) {
+                                                ForEach(HabitColor.allCases, id: \.self) { color in
+                                                    HStack {
+                                                        Circle().fill(color.color).frame(width: 12, height: 12)
+                                                        Text(color.rawValue.capitalized)
+                                                    }.tag(color)
+                                                }
+                                            }
+                                            .pickerStyle(.menu)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                        .background(Color(.secondarySystemGroupedBackground))
+
+                                        // Editable type
+                                        HStack {
+                                            Text("Type")
+                                            Spacer()
+                                            Picker("", selection: $habit.type) {
+                                                ForEach(HabitType.allCases, id: \.self) { type in
+                                                    Text(type.rawValue).tag(type)
+                                                }
+                                            }
+                                            .pickerStyle(.menu)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                        .background(Color(.secondarySystemGroupedBackground))
+
+                                        if habit.visualStyle == .grid {
+                                            // Grid tracking controls
+                                            HStack {
+                                                Text("Update Mode")
+                                                Spacer()
+                                                Picker("", selection: $habit.updateMode) {
+                                                    ForEach(HabitUpdateMode.allCases, id: \.self) { mode in
+                                                        Text(mode.rawValue).tag(mode)
+                                                    }
+                                                }
+                                                .pickerStyle(.menu)
+                                            }
+                                            .padding(.horizontal)
+                                            .padding(.vertical, 12)
+                                            .background(Color(.secondarySystemGroupedBackground))
+
+                                            HStack {
+                                                Text("Cell Unit")
+                                                Spacer()
+                                                Picker("", selection: $habit.cellUnit) {
+                                                    ForEach(CellUnit.allCases, id: \.self) { unit in
+                                                        Text(unit.displayName).tag(unit)
+                                                    }
+                                                }
+                                                .pickerStyle(.menu)
+                                            }
+                                            .padding(.horizontal)
+                                            .padding(.vertical, 12)
+                                            .background(Color(.secondarySystemGroupedBackground))
+
+                                            HStack {
+                                                Text("Duration")
+                                                Spacer()
+                                                Picker("", selection: $habit.durationType) {
+                                                    ForEach(GridDurationType.allCases, id: \.self) { type in
+                                                        Text(type.displayName).tag(type)
+                                                    }
+                                                }
+                                                .pickerStyle(.menu)
+                                            }
+                                            .padding(.horizontal)
+                                            .padding(.vertical, 12)
+                                            .background(Color(.secondarySystemGroupedBackground))
+
+                                            switch habit.durationType {
+                                            case .customRange:
+                                                HStack {
+                                                    Text("Duration Value")
+                                                    Spacer()
+                                                    Stepper(
+                                                        "\(habit.customDuration) \(habit.cellUnit.pluralName)",
+                                                        value: $habit.customDuration,
+                                                        in: customDurationRange(for: habit.cellUnit)
+                                                    )
+                                                }
+                                                .padding(.horizontal)
+                                                .padding(.vertical, 12)
+                                                .background(Color(.secondarySystemGroupedBackground))
+                                            case .toTargetDate:
+                                                HStack {
+                                                    Text("Target Date")
+                                                    Spacer()
+                                                    DatePicker("", selection: Binding(
+                                                        get: { habit.targetDate ?? Date() },
+                                                        set: { habit.targetDate = $0 }
+                                                    ), displayedComponents: .date)
+                                                    .datePickerStyle(.compact)
+                                                }
+                                                .padding(.horizontal)
+                                                .padding(.vertical, 12)
+                                                .background(Color(.secondarySystemGroupedBackground))
+                                            case .indefinite:
+                                                HStack {
+                                                    Image(systemName: "arrow.trianglehead.2.counterclockwise.rotate.90")
+                                                        .foregroundColor(habit.color.color)
+                                                    Text("Grid will cycle when filled")
+                                                        .foregroundColor(.secondary)
+                                                    Spacer()
+                                                }
+                                                .padding(.horizontal)
+                                                .padding(.vertical, 12)
+                                                .background(Color(.secondarySystemGroupedBackground))
+                                            }
+                                        } else if habit.visualStyle == .bar {
+                                            HStack {
+                                                Text("Duration")
+                                                Spacer()
+                                                Picker("", selection: Binding(
+                                                    get: { habit.durationType == .toTargetDate ? BarDurationType.toTargetDate : .customRange },
+                                                    set: { newValue in
+                                                        habit.durationType = newValue.toGridDurationType
+                                                        if newValue == .customRange {
+                                                            habit.targetDate = nil
+                                                        }
+                                                    }
+                                                )) {
+                                                    ForEach(BarDurationType.allCases, id: \.self) { type in
+                                                        Text(type.displayName).tag(type)
+                                                    }
+                                                }
+                                                .pickerStyle(.menu)
+                                            }
+                                            .padding(.horizontal)
+                                            .padding(.vertical, 12)
+                                            .background(Color(.secondarySystemGroupedBackground))
+
+                                            HStack {
+                                                Text("Tick Unit")
+                                                Spacer()
+                                                Picker("", selection: $habit.timelineTickUnit) {
+                                                    ForEach(TimelineTickUnit.allCases, id: \.self) { unit in
+                                                        Text("1 \(unit.singularName)").tag(unit)
+                                                    }
+                                                }
+                                                .pickerStyle(.menu)
+                                            }
+                                            .padding(.horizontal)
+                                            .padding(.vertical, 12)
+                                            .background(Color(.secondarySystemGroupedBackground))
+
+                                            if habit.durationType != .toTargetDate {
+                                                HStack {
+                                                    Text("Duration Value")
+                                                    Spacer()
+                                                    Stepper(
+                                                        "\(habit.timelineDuration) \(habit.timelineTickUnit.displayName.lowercased())",
+                                                        value: $habit.timelineDuration,
+                                                        in: timelineDurationRange(for: habit.timelineTickUnit)
+                                                    )
+                                                }
+                                                .padding(.horizontal)
+                                                .padding(.vertical, 12)
+                                                .background(Color(.secondarySystemGroupedBackground))
+                                            } else if habit.durationType == .toTargetDate {
+                                                HStack {
+                                                    Text("Target Date")
+                                                    Spacer()
+                                                    DatePicker("", selection: Binding(
+                                                        get: { habit.targetDate ?? Date() },
+                                                        set: { habit.targetDate = $0 }
+                                                    ), displayedComponents: habit.timelineTickUnit == .minute || habit.timelineTickUnit == .hour ? [.date, .hourAndMinute] : [.date])
+                                                    .datePickerStyle(.compact)
+                                                }
+                                                .padding(.horizontal)
+                                                .padding(.vertical, 12)
+                                                .background(Color(.secondarySystemGroupedBackground))
+                                            }
+                                        } else if habit.visualStyle == .text {
+                                            HStack {
+                                                Text("Duration")
+                                                Spacer()
+                                                Picker("", selection: Binding(
+                                                    get: { habit.durationType == .toTargetDate ? BarDurationType.toTargetDate : .customRange },
+                                                    set: { newValue in
+                                                        habit.durationType = newValue.toGridDurationType
+                                                        if newValue == .customRange {
+                                                            habit.targetDate = nil
+                                                        }
+                                                    }
+                                                )) {
+                                                    ForEach(BarDurationType.allCases, id: \.self) { type in
+                                                        Text(type.displayName).tag(type)
+                                                    }
+                                                }
+                                                .pickerStyle(.menu)
+                                            }
+                                            .padding(.horizontal)
+                                            .padding(.vertical, 12)
+                                            .background(Color(.secondarySystemGroupedBackground))
+
+                                            HStack {
+                                                Text("Time Range")
+                                                Spacer()
+                                                Picker("", selection: $habit.timeUnit) {
+                                                    ForEach(HabitTimeUnit.allCases, id: \.self) { unit in
+                                                        Text(unit.rawValue).tag(unit)
+                                                    }
+                                                }
+                                                .pickerStyle(.menu)
+                                            }
+                                            .padding(.horizontal)
+                                            .padding(.vertical, 12)
+                                            .background(Color(.secondarySystemGroupedBackground))
+
+                                            if habit.durationType != .toTargetDate {
+                                                HStack {
+                                                    Text("Duration Value")
+                                                    Spacer()
+                                                    Stepper(
+                                                        "\(habit.textCounterDuration) \(habit.timeUnit.rawValue.lowercased())",
+                                                        value: $habit.textCounterDuration,
+                                                        in: textCounterDurationRange(for: habit.timeUnit)
+                                                    )
+                                                }
+                                                .padding(.horizontal)
+                                                .padding(.vertical, 12)
+                                                .background(Color(.secondarySystemGroupedBackground))
+                                            } else if habit.durationType == .toTargetDate {
+                                                HStack {
+                                                    Text("Target Date")
+                                                    Spacer()
+                                                    DatePicker("", selection: Binding(
+                                                        get: { habit.targetDate ?? Date() },
+                                                        set: { habit.targetDate = $0 }
+                                                    ), displayedComponents: [.date, .hourAndMinute])
+                                                    .datePickerStyle(.compact)
+                                                }
+                                                .padding(.horizontal)
+                                                .padding(.vertical, 12)
+                                                .background(Color(.secondarySystemGroupedBackground))
+                                            }
+                                        }
+
+                                        // Start date
+                                        HStack {
+                                            Text("Start Date")
+                                            Spacer()
+                                            DatePicker("", selection: $habit.createdAt, displayedComponents: .date)
+                                                .datePickerStyle(.compact)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                        .background(Color(.secondarySystemGroupedBackground))
+
+                                    } else {
+                                        // Read-only mode
+                                        SettingsRow(label: "Name", value: habit.name)
+                                        SettingsRow(label: "Type", value: habit.type.rawValue)
+                                        SettingsRow(label: "Started", value: habit.startDate.formatted(date: .abbreviated, time: .omitted))
+                                        SettingsRow(label: "Goal", value: habit.styleGoalSummary)
+                                        switch habit.visualStyle {
+                                        case .grid:
+                                            SettingsRow(label: "Update Mode", value: habit.updateMode.rawValue)
+                                            SettingsRow(label: "Cell Unit", value: "1 \(habit.cellUnit.displayName)")
+                                            SettingsRow(label: "Current Grid", value: "\(habit.gridDimensions.columns) × \(habit.gridDimensions.rows)")
+                                            if habit.gridPageInfo.totalPages > 1 {
+                                                SettingsRow(label: "Grid Page", value: "\(habit.gridPageInfo.currentPage + 1) of \(habit.gridPageInfo.totalPages)")
+                                            }
+                                        case .bar:
+                                            SettingsRow(label: "Tick Unit", value: "1 \(habit.timelineTickUnit.singularName)")
+                                        case .text:
+                                            SettingsRow(label: "Time Range", value: habit.timeUnit.rawValue)
+                                        }
+                                    }
+                                }
+
+                                // Progress Section (only for manual grid habits)
+                                if habit.updateMode == .manual && habit.visualStyle == .grid {
+                                    SettingsSection(title: "Progress") {
+                                        HStack {
+                                            Text("Cells Filled")
+                                            Spacer()
+                                            Text("\(habit.manuallyFilledCells.count) / \(habit.totalDurationCells)")
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                        .background(Color(.secondarySystemGroupedBackground))
+
+                                        HStack {
+                                            Text("Current Cell")
+                                            Spacer()
+                                            Text("\(habit.cellUnit.displayName) \(habit.currentCellIndex + 1)")
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                        .background(Color(.secondarySystemGroupedBackground))
+
+                                        Button {
+                                            habitManager.incrementProgress(for: habit)
+                                            if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
+                                                habit = updated
+                                            }
+                                        } label: {
+                                            HStack {
+                                                let isTodayFilled = habit.manuallyFilledCells.contains(habit.currentCellIndex)
+                                                Image(systemName: isTodayFilled ? "checkmark.circle.fill" : "plus.circle.fill")
+                                                Text(isTodayFilled ? "Unmark Today" : "Mark Today Complete")
+                                            }
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 12)
+                                        }
+                                        .background(Color(.secondarySystemGroupedBackground))
+                                    }
+                                }
+
+                                // Appearance Section
+                                SettingsSection(title: "Appearance") {
+                                    if isEditMode {
+                                        HStack {
+                                            Text("Widget Size")
+                                            Spacer()
+                                            Picker("", selection: $habit.widgetSize) {
+                                                ForEach(HabitWidgetSize.allCases, id: \.self) { size in
+                                                    Text(size.rawValue).tag(size)
+                                                }
+                                            }
+                                            .pickerStyle(.menu)
+                                        }
+                                            .padding(.horizontal)
+                                            .padding(.vertical, 12)
+                                            .background(Color(.secondarySystemGroupedBackground))
+
+                                        if settings.premiumUnlocked {
+                                            HStack {
+                                                Text("Tracker Card")
+                                                Spacer()
+                                                Picker("", selection: $habit.premiumWidgetStyle) {
+                                                    Text("Base Style").tag(nil as PremiumWidgetStyle?)
+                                                    ForEach(PremiumWidgetStyle.allCases) { style in
+                                                        Text(style.displayName).tag(Optional(style))
+                                                    }
+                                                }
+                                                .pickerStyle(.menu)
+                                            }
+                                            .padding(.horizontal)
+                                            .padding(.vertical, 12)
+                                            .background(Color(.secondarySystemGroupedBackground))
+                                        }
+
+                                        HStack {
+                                            Text("Visual Style")
+                                            Spacer()
+                                            Picker("", selection: $habit.visualStyle) {
+                                                ForEach(HabitVisualStyle.allCases, id: \.self) { style in
+                                                    Text(style.rawValue).tag(style)
+                                                }
+                                            }
+                                            .pickerStyle(.menu)
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                        .background(Color(.secondarySystemGroupedBackground))
+                                    } else {
+                                        SettingsRow(label: "Widget Size", value: habit.widgetSize.rawValue)
+                                        if settings.premiumUnlocked {
+                                            SettingsRow(label: "Tracker Card", value: habit.premiumWidgetStyle?.displayName ?? "Base Style")
+                                        }
+                                        SettingsRow(label: "Visual Style", value: habit.visualStyle.rawValue)
+                                    }
+                                }
+
+                                // Notes Section
+                                SettingsSection(title: "Notes & Journey (\(habit.notes.count))") {
+                                    Button {
+                                        showAddNote = true
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: "plus.circle.fill")
+                                                .foregroundColor(.blue)
+                                            Text("Add Note")
+                                            Spacer()
+                                        }
+                                        .padding(.horizontal)
+                                        .padding(.vertical, 12)
+                                    }
+                                    .background(Color(.secondarySystemGroupedBackground))
+
+                                    if !habit.notes.isEmpty {
+                                        ForEach(habit.notes.prefix(3)) { note in
+                                            VStack(alignment: .leading, spacing: 6) {
+                                                Text(note.content)
+                                                    .font(.subheadline)
+                                                    .lineLimit(2)
+
+                                                Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                                    .font(.caption2)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.horizontal)
+                                            .padding(.vertical, 10)
+                                            .background(Color(.secondarySystemGroupedBackground))
+                                        }
+
+                                        if habit.notes.count > 3 {
+                                            Button {
+                                                showNotesList = true
+                                            } label: {
+                                                HStack {
+                                                    Text("View All Notes")
+                                                    Spacer()
+                                                    Text("\(habit.notes.count)")
+                                                        .foregroundColor(.secondary)
+                                                    Image(systemName: "chevron.right")
+                                                        .font(.caption)
+                                                        .foregroundColor(.secondary)
+                                                }
+                                                .padding(.horizontal)
+                                                .padding(.vertical, 12)
+                                            }
+                                            .background(Color(.secondarySystemGroupedBackground))
+                                        }
+                                    }
+                                }
+
+                                // Actions Section
+                                SettingsSection(title: "Actions") {
+                                    Button {
+                                        if habit.isCompleted {
+                                            habitManager.uncompleteHabit(habit)
+                                        } else {
+                                            habitManager.completeHabit(habit)
+                                        }
+                                        if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
+                                            habit = updated
+                                        }
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: habit.isCompleted ? "arrow.uturn.backward.circle" : "checkmark.seal.fill")
+                                            Text(habit.isCompleted ? "Mark as Active" : "Mark Goal Complete")
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 12)
+                                        .foregroundColor(habit.isCompleted ? .orange : .green)
+                                    }
+                                    .background(Color(.secondarySystemGroupedBackground))
+
+                                    Button {
+                                        showResetConfirmation = true
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: "arrow.counterclockwise")
+                                            Text("Reset Progress")
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 12)
+                                        .foregroundColor(.orange)
+                                    }
+                                    .background(Color(.secondarySystemGroupedBackground))
+                                    .alert("Reset Progress", isPresented: $showResetConfirmation) {
+                                        Button("Cancel", role: .cancel) { }
+                                        Button("Reset", role: .destructive) {
+                                            habitManager.resetProgress(for: habit)
+                                            if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
+                                                habit = updated
+                                            }
+                                        }
+                                    } message: {
+                                        Text("Are you sure you want to reset this habit? All progress will be lost.")
+                                    }
+
+                                    Button(role: .destructive) {
+                                        habitManager.deleteHabit(habit)
+                                        dismiss()
+                                    } label: {
+                                        HStack {
+                                            Image(systemName: "trash")
+                                            Text("Delete Habit")
+                                        }
+                                        .frame(maxWidth: .infinity)
                                         .padding(.vertical, 12)
                                     }
                                     .background(Color(.secondarySystemGroupedBackground))
                                 }
                             }
                         }
-                        
-                        // Actions Section
-                        SettingsSection(title: "Actions") {
-                            // Mark as Complete / Uncomplete button
-                            Button {
-                                if habit.isCompleted {
-                                    habitManager.uncompleteHabit(habit)
-                                } else {
-                                    habitManager.completeHabit(habit)
-                                }
-                                if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
-                                    habit = updated
-                                }
-                            } label: {
-                                HStack {
-                                    Image(systemName: habit.isCompleted ? "arrow.uturn.backward.circle" : "checkmark.seal.fill")
-                                    Text(habit.isCompleted ? "Mark as Active" : "Mark Goal Complete")
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .foregroundColor(habit.isCompleted ? .orange : .green)
-                            }
-                            .background(Color(.secondarySystemGroupedBackground))
-                            
-                            Button {
-                                showResetConfirmation = true
-                            } label: {
-                                HStack {
-                                    Image(systemName: "arrow.counterclockwise")
-                                    Text("Reset Progress")
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .foregroundColor(.orange)
-                            }
-                            .background(Color(.secondarySystemGroupedBackground))
-                            .alert("Reset Progress", isPresented: $showResetConfirmation) {
-                                Button("Cancel", role: .cancel) { }
-                                Button("Reset", role: .destructive) {
-                                    habitManager.resetProgress(for: habit)
-                                    if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
-                                        habit = updated
-                                    }
-                                }
-                            } message: {
-                                Text("Are you sure you want to reset this habit? All progress will be lost.")
-                            }
-                            
-                            Button(role: .destructive) {
-                                habitManager.deleteHabit(habit)
-                                dismiss()
-                            } label: {
-                                HStack {
-                                    Image(systemName: "trash")
-                                    Text("Delete Habit")
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                            }
-                            .background(Color(.secondarySystemGroupedBackground))
-                        }
+                        .padding(.vertical)
                     }
+                    .tag(0)
+
+                    ScrollView {
+                        HabitAnalyticsSection(habit: habit)
+                            .padding(.top, 8)
+                            .padding(.bottom, 24)
+                    }
+                    .tag(1)
                 }
-                .padding(.vertical)
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(habit.name)
+            .navigationTitle(selectedPage == 0 ? habit.name : "Analytics")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -3060,19 +3990,28 @@ struct HabitDetailSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     if isEditMode {
                         Button("Save") {
+                            normalizeHabitForCurrentStyle()
                             habitManager.updateHabit(habit)
                             isEditMode = false
                         }
                         .bold()
-                    } else {
+                    } else if selectedPage == 0 {
                         HStack(spacing: 12) {
                             Button("Edit") {
+                                selectedPage = 0
                                 isEditMode = true
                             }
                             Button("Done") {
+                                normalizeHabitForCurrentStyle()
                                 habitManager.updateHabit(habit)
                                 dismiss()
                             }
+                        }
+                    } else {
+                        Button("Done") {
+                            normalizeHabitForCurrentStyle()
+                            habitManager.updateHabit(habit)
+                            dismiss()
                         }
                     }
                 }
@@ -3099,6 +4038,23 @@ struct HabitDetailSheet: View {
                     }
                 }
             }
+            .onChange(of: selectedPage) { _, newValue in
+                if isEditMode && newValue != 0 {
+                    selectedPage = 0
+                }
+            }
+            .onAppear {
+                if let current = habit.premiumWidgetStyle,
+                   let index = PremiumWidgetStyle.allCases.firstIndex(of: current) {
+                    currentPremiumPreviewPage = index
+                }
+            }
+            .onChange(of: habit.premiumWidgetStyle) { _, newStyle in
+                if let newStyle,
+                   let index = PremiumWidgetStyle.allCases.firstIndex(of: newStyle) {
+                    currentPremiumPreviewPage = index
+                }
+            }
             .onChange(of: habit.visualStyle) { oldStyle, newStyle in
                 // Show confirmation when switching visual styles
                 guard !suppressStyleChange else {
@@ -3119,6 +4075,7 @@ struct HabitDetailSheet: View {
                     if let newStyle = pendingStyle {
                         suppressStyleChange = true
                         habit.visualStyle = newStyle
+                        normalizeHabitForCurrentStyle()
                         habitManager.updateHabit(habit)
                     }
                     pendingStyle = nil
@@ -3135,6 +4092,69 @@ struct HabitDetailSheet: View {
                     Text("Your progress data will be preserved.")
                 }
             }
+        }
+    }
+
+    private func normalizeHabitForCurrentStyle() {
+        habit = normalizedHabit(habit)
+    }
+
+    private func normalizedHabit(_ source: Habit) -> Habit {
+        var normalized = source
+
+        if normalized.visualStyle != .grid {
+            normalized.updateMode = .auto
+            if normalized.durationType == .indefinite {
+                normalized.durationType = .customRange
+            }
+        }
+
+        if normalized.durationType == .toTargetDate {
+            normalized.targetDate = normalized.targetDate ?? Date()
+        } else {
+            normalized.targetDate = nil
+        }
+
+        normalized.customDuration = clamped(normalized.customDuration, to: customDurationRange(for: normalized.cellUnit))
+        normalized.timelineDuration = clamped(normalized.timelineDuration, to: timelineDurationRange(for: normalized.timelineTickUnit))
+        normalized.textCounterDuration = clamped(normalized.textCounterDuration, to: textCounterDurationRange(for: normalized.timeUnit))
+
+        return normalized
+    }
+
+    private func clamped(_ value: Int, to range: ClosedRange<Int>) -> Int {
+        min(max(value, range.lowerBound), range.upperBound)
+    }
+
+    private func customDurationRange(for unit: CellUnit) -> ClosedRange<Int> {
+        switch unit {
+        case .day: return 4...365
+        case .week: return 4...104
+        case .month: return 4...120
+        case .year: return 4...50
+        }
+    }
+
+    private func timelineDurationRange(for unit: TimelineTickUnit) -> ClosedRange<Int> {
+        switch unit {
+        case .minute: return 1...1440
+        case .hour: return 1...720
+        case .day: return 1...365
+        case .week: return 1...104
+        case .month: return 1...120
+        case .year: return 1...100
+        }
+    }
+
+    private func textCounterDurationRange(for unit: HabitTimeUnit) -> ClosedRange<Int> {
+        switch unit {
+        case .seconds: return 1...3600
+        case .minutes: return 1...1440
+        case .hours: return 1...720
+        case .days: return 1...365
+        case .weeks: return 1...104
+        case .months: return 1...120
+        case .years: return 1...100
         }
     }
 }
@@ -3202,26 +4222,13 @@ struct HabitAnalyticsSection: View {
         return "\(days)d"
     }
 
-    private var completionPercentage: Double {
-        let total = habit.totalDurationCells
-        guard total > 0 else { return 0 }
-        let elapsed = habit.elapsedCells
-        return min(Double(elapsed) / Double(total) * 100, 100)
+    private var progressValue: String {
+        guard let progress = habit.styleProgressPercentage() else { return "—" }
+        return String(format: "%.1f%%", progress)
     }
 
     private var projectedCompletionDate: String {
-        guard habit.durationType != .indefinite else { return "—" }
-        let total = habit.totalDurationCells
-        let elapsed = habit.elapsedCells
-        let remaining = total - elapsed
-        guard remaining > 0 else { return "Reached" }
-        let calendar = Calendar.current
-        switch habit.cellUnit {
-        case .day: return (calendar.date(byAdding: .day, value: remaining, to: Date()) ?? Date()).formatted(date: .abbreviated, time: .omitted)
-        case .week: return (calendar.date(byAdding: .weekOfYear, value: remaining, to: Date()) ?? Date()).formatted(date: .abbreviated, time: .omitted)
-        case .month: return (calendar.date(byAdding: .month, value: remaining, to: Date()) ?? Date()).formatted(date: .abbreviated, time: .omitted)
-        case .year: return (calendar.date(byAdding: .year, value: remaining, to: Date()) ?? Date()).formatted(date: .abbreviated, time: .omitted)
-        }
+        habit.styleProjectedEndDescription
     }
 
     var body: some View {
@@ -3245,7 +4252,7 @@ struct HabitAnalyticsSection: View {
                         StatCard(title: "Longest Streak", value: "\(longestStreakDays)d", icon: "trophy.fill", color: .yellow)
                     }
                     HStack(spacing: 12) {
-                        StatCard(title: "Progress", value: String(format: "%.1f%%", completionPercentage), icon: "chart.bar.fill", color: .green)
+                        StatCard(title: "Progress", value: progressValue, icon: "chart.bar.fill", color: .green)
                         if habit.resetHistory.count >= 1 {
                             StatCard(title: "Avg Between Resets", value: averageTimeBetweenResets, icon: "arrow.triangle.2.circlepath", color: .purple)
                         } else {
@@ -3365,7 +4372,6 @@ struct GridAnalyticsGraph: View {
             } else {
                 // Auto-tracking: days in this week that are elapsed
                 let elapsedDaysTotal = calendar.dateComponents([.day], from: habit.referenceDate, to: now).day ?? 0
-                let weekEndDays = daysSinceCreation + totalDaysInWeek
                 let filledInWeek = max(0, min(totalDaysInWeek, elapsedDaysTotal - daysSinceCreation))
                 data.append((label, max(0, filledInWeek), totalDaysInWeek))
             }
@@ -3408,20 +4414,24 @@ struct TimelineAnalyticsGraph: View {
 
     private var progressPoints: [(day: Int, progress: Double)] {
         let calendar = Calendar.current
-        let totalDays = max(1, calendar.dateComponents([.day], from: habit.createdAt, to: Date()).day ?? 1)
+        guard let targetDate = habit.styleTargetDate() else { return [] }
+        let totalInterval = targetDate.timeIntervalSince(habit.referenceDate)
+        guard totalInterval > 0 else { return [] }
+
+        let totalDays = max(1, calendar.dateComponents([.day], from: habit.referenceDate, to: Date()).day ?? 1)
         let sampleCount = min(totalDays, 20)
         let step = max(1, totalDays / sampleCount)
-        let totalDuration = Double(habit.totalDurationCells)
-        guard totalDuration > 0 else { return [] }
 
         var points: [(Int, Double)] = []
         for i in stride(from: 0, through: totalDays, by: step) {
-            let progress = min(Double(i) / totalDuration * 100, 100)
+            let pointDate = calendar.date(byAdding: .day, value: i, to: habit.referenceDate) ?? habit.referenceDate
+            let progress = min(max(pointDate.timeIntervalSince(habit.referenceDate) / totalInterval * 100, 0), 100)
             points.append((i, progress))
         }
         // Always include current day
         if points.last?.0 != totalDays {
-            points.append((totalDays, min(Double(totalDays) / totalDuration * 100, 100)))
+            let currentProgress = habit.styleProgressPercentage() ?? 0
+            points.append((totalDays, currentProgress))
         }
         return points
     }
@@ -3505,28 +4515,15 @@ struct TimelineAnalyticsGraph: View {
 struct TextCounterAnalyticsGraph: View {
     let habit: Habit
 
+    private var targetDate: Date? {
+        habit.styleTargetDate()
+    }
+
     private var milestones: [(label: String, percent: Double, reached: Bool)] {
         let total: Double
         let elapsed: Double
 
-        if habit.durationType == .indefinite {
-            return []
-        }
-
-        let targetDate: Date = {
-            if let t = habit.targetDate { return t }
-            let calendar = Calendar.current
-            let dur = habit.textCounterDuration
-            switch habit.timeUnit {
-            case .seconds: return calendar.date(byAdding: .second, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .minutes: return calendar.date(byAdding: .minute, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .hours: return calendar.date(byAdding: .hour, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .days: return calendar.date(byAdding: .day, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .weeks: return calendar.date(byAdding: .weekOfYear, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .months: return calendar.date(byAdding: .month, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .years: return calendar.date(byAdding: .year, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            }
-        }()
+        guard let targetDate else { return [] }
 
         total = targetDate.timeIntervalSince(habit.referenceDate)
         elapsed = Date().timeIntervalSince(habit.referenceDate)
@@ -3540,24 +4537,9 @@ struct TextCounterAnalyticsGraph: View {
     }
 
     private var currentPercent: Double {
-        guard let totalInterval = {
-            let targetDate: Date = {
-                if let t = habit.targetDate { return t }
-                let calendar = Calendar.current
-                let dur = habit.textCounterDuration
-                switch habit.timeUnit {
-                case .seconds: return calendar.date(byAdding: .second, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .minutes: return calendar.date(byAdding: .minute, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .hours: return calendar.date(byAdding: .hour, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .days: return calendar.date(byAdding: .day, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .weeks: return calendar.date(byAdding: .weekOfYear, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .months: return calendar.date(byAdding: .month, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .years: return calendar.date(byAdding: .year, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                }
-            }()
-            let total = targetDate.timeIntervalSince(habit.referenceDate)
-            return total > 0 ? total : nil
-        }() else { return 0 }
+        guard let targetDate else { return 0 }
+        let totalInterval = targetDate.timeIntervalSince(habit.referenceDate)
+        guard totalInterval > 0 else { return 0 }
         let elapsed = Date().timeIntervalSince(habit.referenceDate)
         return min(elapsed / totalInterval * 100, 100)
     }
@@ -3631,21 +4613,7 @@ struct TextCounterAnalyticsGraph: View {
 
                 // Time-based stats for text counter
                 HStack(spacing: 16) {
-                    if habit.type == .countdown {
-                        let targetDate: Date = {
-                            if let t = habit.targetDate { return t }
-                            let calendar = Calendar.current
-                            let dur = habit.textCounterDuration
-                            switch habit.timeUnit {
-                            case .seconds: return calendar.date(byAdding: .second, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .minutes: return calendar.date(byAdding: .minute, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .hours: return calendar.date(byAdding: .hour, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .days: return calendar.date(byAdding: .day, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .weeks: return calendar.date(byAdding: .weekOfYear, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .months: return calendar.date(byAdding: .month, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .years: return calendar.date(byAdding: .year, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            }
-                        }()
+                    if habit.type == .countdown, let targetDate {
                         let remaining = targetDate.timeIntervalSince(Date())
                         let days = max(0, Int(remaining / 86400))
                         Text("\(days) days remaining")
@@ -3677,7 +4645,7 @@ struct FlagShape: Shape {
 struct SettingsSection<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title.uppercased())
@@ -3686,7 +4654,7 @@ struct SettingsSection<Content: View>: View {
                 .padding(.horizontal)
                 .padding(.top, 20)
                 .padding(.bottom, 8)
-            
+
             VStack(spacing: 1) {
                 content
             }
@@ -3699,7 +4667,7 @@ struct SettingsSection<Content: View>: View {
 struct SettingsRow: View {
     let label: String
     let value: String
-    
+
     var body: some View {
         HStack {
             Text(label)
@@ -3776,10 +4744,11 @@ struct MinimalHabitView: View {
 // MARK: - Habits Section View
 struct HabitsSection: View {
     @ObservedObject var habitManager: HabitManager
+    @ObservedObject var settings: AppSettings
     @Binding var selectedHabit: Habit?
     @State private var showAddHabit = false
     @State private var habitsHidden = false
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             // Section Header
@@ -3812,7 +4781,7 @@ struct HabitsSection: View {
                         .foregroundColor(.white.opacity(0.7))
                 }
             }
-            
+
             if habitManager.activeHabits.isEmpty {
                 // Empty state
                 Button {
@@ -3855,12 +4824,13 @@ struct HabitsSection: View {
                 // Habit list with row-based layout
                 ReorderableHabitList(
                     habitManager: habitManager,
+                    premiumUnlocked: settings.premiumUnlocked,
                     selectedHabit: $selectedHabit
                 )
             }
         }
         .sheet(isPresented: $showAddHabit) {
-            AddHabitSheet(habitManager: habitManager)
+            AddHabitSheet(habitManager: habitManager, settings: settings)
         }
     }
 }
@@ -3868,22 +4838,24 @@ struct HabitsSection: View {
 // MARK: - Reorderable Habit List with Row Layout
 struct ReorderableHabitList: View {
     @ObservedObject var habitManager: HabitManager
+    let premiumUnlocked: Bool
     @Binding var selectedHabit: Habit?
-    
+
     var body: some View {
         let rows = buildRows(from: habitManager.activeHabits)
-        
+
         VStack(spacing: 12) {
             ForEach(rows, id: \.id) { row in
                 HStack(spacing: 12) {
                     ForEach(row.habits) { habit in
                         HabitCardWrapper(
                             habit: habit,
+                            premiumUnlocked: premiumUnlocked,
                             habitManager: habitManager,
                             selectedHabit: $selectedHabit
                         )
                     }
-                    
+
                     // If single small widget in row, add invisible drop zone for the other half
                     if row.habits.count == 1 && row.habits[0].widgetSize == .half {
                         Rectangle()
@@ -3912,12 +4884,12 @@ struct ReorderableHabitList: View {
             }
         }
     }
-    
+
     // Build rows: small widgets can pair, others get own row
     private func buildRows(from habits: [Habit]) -> [HabitRowData] {
         var result: [HabitRowData] = []
         var pendingSmall: Habit? = nil
-        
+
         for habit in habits {
             if habit.widgetSize == .half {
                 if let first = pendingSmall {
@@ -3934,11 +4906,11 @@ struct ReorderableHabitList: View {
                 result.append(HabitRowData(habits: [habit]))
             }
         }
-        
+
         if let small = pendingSmall {
             result.append(HabitRowData(habits: [small]))
         }
-        
+
         return result
     }
 }
@@ -3946,7 +4918,7 @@ struct ReorderableHabitList: View {
 // Helper struct for row grouping with stable ID
 struct HabitRowData: Identifiable {
     let habits: [Habit]
-    
+
     var id: String {
         habits.map { $0.id.uuidString }.joined(separator: "-")
     }
@@ -3955,24 +4927,25 @@ struct HabitRowData: Identifiable {
 // MARK: - Habit Card Wrapper with Drag Support
 struct HabitCardWrapper: View {
     let habit: Habit
+    let premiumUnlocked: Bool
     @ObservedObject var habitManager: HabitManager
     @Binding var selectedHabit: Habit?
-    
+
     @State private var isTargeted = false
     @State private var showAddNote = false
     @State private var showNotesList = false
-    
+
     // Pre-compute this to avoid context menu delay
     private var isTodayFilled: Bool {
         habit.manuallyFilledCells.contains(habit.currentCellIndex)
     }
-    
+
     private var notesCount: Int {
         habit.notes.count
     }
-    
+
     var body: some View {
-        HabitCardContent(habit: habit)
+        HabitCardContent(habit: habit, premiumUnlocked: premiumUnlocked)
             .frame(maxWidth: .infinity)
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
@@ -3985,7 +4958,7 @@ struct HabitCardWrapper: View {
             }
             .draggable(habit.id.uuidString) {
                 // Drag preview
-                HabitCardContent(habit: habit)
+                HabitCardContent(habit: habit, premiumUnlocked: premiumUnlocked)
                     .frame(width: 120, height: 80)
                     .opacity(0.8)
             }
@@ -4008,14 +4981,14 @@ struct HabitCardWrapper: View {
                         Label(isTodayFilled ? "Unmark Today" : "Mark Today", systemImage: isTodayFilled ? "xmark.circle" : "checkmark.circle")
                     }
                 }
-                
+
                 // Add Note - available for all habits
                 Button {
                     showAddNote = true
                 } label: {
                     Label("Add Note", systemImage: "square.and.pencil")
                 }
-                
+
                 // View Notes - only if there are notes
                 if notesCount > 0 {
                     Button {
@@ -4024,9 +4997,9 @@ struct HabitCardWrapper: View {
                         Label("View Notes (\(notesCount))", systemImage: "note.text")
                     }
                 }
-                
+
                 Divider()
-                
+
                 Button(role: .destructive) {
                     habitManager.deleteHabit(habit)
                 } label: {
@@ -4040,18 +5013,18 @@ struct HabitCardWrapper: View {
                 NotesListSheet(habitManager: habitManager, habit: habit)
             }
     }
-    
+
     private func performMove(from sourceID: UUID, to targetID: UUID) {
         guard let fromIndex = habitManager.habits.firstIndex(where: { $0.id == sourceID }),
               let toIndex = habitManager.habits.firstIndex(where: { $0.id == targetID }),
               fromIndex != toIndex else {
             return
         }
-        
+
         withAnimation(.easeInOut(duration: 0.2)) {
             habitManager.moveHabit(from: fromIndex, to: toIndex)
         }
-        
+
         let impact = UIImpactFeedbackGenerator(style: .light)
         impact.impactOccurred()
     }
@@ -4060,16 +5033,29 @@ struct HabitCardWrapper: View {
 // MARK: - Habit Card Content (just the visual)
 struct HabitCardContent: View {
     let habit: Habit
-    
+    let premiumUnlocked: Bool
+
     var body: some View {
         Group {
-            switch habit.visualStyle {
-            case .grid:
-                ContributionGridView(habit: habit)
-            case .text:
-                TextCounterView(habit: habit)
-            case .bar:
-                TimelineBarView(habit: habit)
+            if premiumUnlocked, let premiumStyle = habit.premiumWidgetStyle {
+                PremiumWidgetCardView(
+                    style: premiumStyle,
+                    habit: habit,
+                    isUnlocked: true,
+                    layoutSize: habit.widgetSize,
+                    contextLabel: "TRACK",
+                    showUnlockState: false,
+                    horizontalPadding: 0
+                )
+            } else {
+                switch habit.visualStyle {
+                case .grid:
+                    ContributionGridView(habit: habit)
+                case .text:
+                    TextCounterView(habit: habit)
+                case .bar:
+                    TimelineBarView(habit: habit)
+                }
             }
         }
     }
@@ -4082,20 +5068,20 @@ struct TrackerView: View {
     @ObservedObject var stats: StatsManager
     @ObservedObject var settings: AppSettings
     @StateObject private var habitManager = HabitManager()
-    
+
     private var orientationManager: OrientationManager { OrientationManager.shared }
-    
+
     @State private var showHeader = false
     @State private var showLockInButton = false
     @State private var showStatsCard = false
     @State private var showHabitsSection = false
     @State private var selectedHabit: Habit?
     @State private var showCompletedGoals = false
-    
+
     var body: some View {
         ZStack {
             TrackerBackground()
-            
+
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
                     // Header with logo and title
@@ -4129,7 +5115,7 @@ struct TrackerView: View {
                                     showCompletedGoals = true
                                 }
                         }
-                        
+
                         Text("Tracker")
                             .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
@@ -4139,7 +5125,7 @@ struct TrackerView: View {
                     .opacity(showHeader ? 1 : 0)
                     .offset(y: showHeader ? 0 : 20)
                     .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showHeader)
-                    
+
                     // Lock In Now button
                     Button {
                         withAnimation(.spring(response: 0.4)) {
@@ -4172,22 +5158,23 @@ struct TrackerView: View {
                     .opacity(showLockInButton ? 1 : 0)
                     .offset(y: showLockInButton ? 0 : 20)
                     .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: showLockInButton)
-                    
+
                     // Stats Card
                     StatsCard(stats: stats, habitManager: habitManager)
                         .opacity(showStatsCard ? 1 : 0)
                         .offset(y: showStatsCard ? 0 : 20)
                         .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: showStatsCard)
-                    
+
                     // Habits Section
                     HabitsSection(
                         habitManager: habitManager,
+                        settings: settings,
                         selectedHabit: $selectedHabit
                     )
                     .opacity(showHabitsSection ? 1 : 0)
                     .offset(y: showHabitsSection ? 0 : 20)
                     .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: showHabitsSection)
-                    
+
                     Spacer(minLength: 40)
                 }
                 .padding(.horizontal, 20)
@@ -4204,24 +5191,24 @@ struct TrackerView: View {
                 }
         )
         .sheet(item: $selectedHabit) { habit in
-            HabitDetailSheet(habitManager: habitManager, habit: habit)
+            HabitDetailSheet(habitManager: habitManager, settings: settings, habit: habit)
         }
         .fullScreenCover(isPresented: $showCompletedGoals) {
             CompletedGoalsView(habitManager: habitManager, isPresented: $showCompletedGoals)
         }
         .onAppear {
             orientationManager.lockToPortrait()
-            
+
             showHeader = false
             showLockInButton = false
             showStatsCard = false
             showHabitsSection = false
-            
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showHeader = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { showLockInButton = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { showStatsCard = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { showHabitsSection = true }
-            
+
             // Check for any habits that have reached their goals
             habitManager.checkAndSendGoalNotifications()
         }
@@ -4232,7 +5219,7 @@ struct TrackerView: View {
 struct StatsCard: View {
     @ObservedObject var stats: StatsManager
     @ObservedObject var habitManager: HabitManager
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Lock In Stats Section
@@ -4246,23 +5233,23 @@ struct StatsCard: View {
                         .foregroundColor(.white)
                     Spacer()
                 }
-                
+
                 HStack(spacing: 12) {
                     StatItem(icon: "sun.max.fill", value: stats.todayFormatted, label: "Today", color: .orange)
                     StatItem(icon: "calendar", value: stats.weekFormatted, label: "This Week", color: .blue)
                     StatItem(icon: "trophy.fill", value: stats.allTimeFormatted, label: "All Time", color: .yellow)
                 }
-                
+
                 HStack(spacing: 12) {
-                    StatItem(icon: "checkmark.circle.fill", value: "\(stats.sessionsCompleted)", label: "Sessions", color: .green)
+                    StatItem(icon: "checkmark.circle.fill", value: "\(stats.sessionsCompleted)", label: "Sessions Today", color: .green)
                     StatItem(icon: "flame.fill", value: "\(stats.currentStreak)", label: "Day Streak", color: .red)
                     StatItem(icon: "chart.line.uptrend.xyaxis", value: stats.weeklyAverageFormatted, label: "Daily Avg", color: .purple)
                 }
             }
-            
+
             Divider()
                 .background(Color.white.opacity(0.2))
-            
+
             // Habits Stats Section
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -4274,9 +5261,9 @@ struct StatsCard: View {
                         .foregroundColor(.white)
                     Spacer()
                 }
-                
+
                 HStack(spacing: 12) {
-                    StatItem(icon: "plus.circle.fill", value: "\(habitManager.totalHabitsCreated)", label: "Created", color: .blue)
+                    StatItem(icon: "plus.circle.fill", value: "\(habitManager.totalHabitsCreated)", label: "Total", color: .blue)
                     StatItem(icon: "checkmark.seal.fill", value: "\(habitManager.totalHabitsCompleted)", label: "Completed", color: .green)
                     StatItem(icon: "arrow.clockwise", value: "\(habitManager.activeHabits.count)", label: "Active", color: .teal)
                 }
@@ -4301,20 +5288,23 @@ struct StatItem: View {
     let value: String
     let label: String
     var color: Color = .orange
-    
+
     var body: some View {
         VStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.body)
                 .foregroundColor(color)
-            
+
             Text(value)
                 .font(.headline.bold())
                 .foregroundColor(.white)
-            
+
             Text(label)
                 .font(.caption2)
                 .foregroundColor(.white.opacity(0.7))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
     }
@@ -4326,12 +5316,12 @@ struct CompletedGoalsView: View {
     @Binding var isPresented: Bool
     @State private var selectedCompletedHabit: Habit?
     @State private var showContent = false
-    
+
     var body: some View {
         ZStack {
             // Same background as TrackerView
             TrackerBackground()
-            
+
             VStack(spacing: 0) {
                 // Header
                 HStack {
@@ -4347,15 +5337,15 @@ struct CompletedGoalsView: View {
                             .font(.title2)
                             .foregroundColor(.white.opacity(0.7))
                     }
-                    
+
                     Spacer()
-                    
+
                     Text("Completed Goals")
                         .font(.title2.weight(.bold))
                         .foregroundColor(.white)
-                    
+
                     Spacer()
-                    
+
                     // Invisible spacer for balance
                     Image(systemName: "xmark.circle.fill")
                         .font(.title2)
@@ -4364,7 +5354,7 @@ struct CompletedGoalsView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 60)
                 .padding(.bottom, 20)
-                
+
                 if habitManager.completedHabits.isEmpty {
                     // Empty state
                     Spacer()
@@ -4372,11 +5362,11 @@ struct CompletedGoalsView: View {
                         Image(systemName: "trophy")
                             .font(.system(size: 60))
                             .foregroundColor(.yellow.opacity(0.5))
-                        
+
                         Text("No Completed Goals Yet")
                             .font(.title3.weight(.semibold))
                             .foregroundColor(.white)
-                        
+
                         Text("Complete your habits to see them here!")
                             .font(.subheadline)
                             .foregroundColor(.white.opacity(0.6))
@@ -4421,7 +5411,7 @@ struct CompletedGoalsView: View {
 // MARK: - Completed Habit Card
 struct CompletedHabitCard: View {
     let habit: Habit
-    
+
     var body: some View {
         HStack(spacing: 14) {
             // Icon
@@ -4429,36 +5419,36 @@ struct CompletedHabitCard: View {
                 Circle()
                     .fill(habit.color.color.opacity(0.2))
                     .frame(width: 50, height: 50)
-                
+
                 Image(systemName: habit.icon)
                     .font(.title3)
                     .foregroundColor(habit.color.color)
             }
-            
+
             // Info
             VStack(alignment: .leading, spacing: 4) {
                 Text(habit.name)
                     .font(.headline)
                     .foregroundColor(.white)
-                
+
                 HStack(spacing: 8) {
                     if let completedAt = habit.completedAt {
                         Label(completedAt.formatted(date: .abbreviated, time: .omitted), systemImage: "checkmark.seal.fill")
                             .font(.caption)
                             .foregroundColor(.green)
                     }
-                    
+
                     Text("•")
                         .foregroundColor(.white.opacity(0.3))
-                    
-                    Text("\(habit.totalDurationCells) \(habit.cellUnit.pluralName)")
+
+                    Text(habit.styleGoalSummary)
                         .font(.caption)
                         .foregroundColor(.white.opacity(0.6))
                 }
             }
-            
+
             Spacer()
-            
+
             // Chevron
             Image(systemName: "chevron.right")
                 .font(.caption)
@@ -4481,7 +5471,7 @@ struct CompletedHabitDetailSheet: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var habitManager: HabitManager
     @State var habit: Habit
-    
+
     var body: some View {
         NavigationView {
             ScrollView {
@@ -4492,15 +5482,15 @@ struct CompletedHabitDetailSheet: View {
                             Circle()
                                 .fill(habit.color.color.opacity(0.2))
                                 .frame(width: 80, height: 80)
-                            
+
                             Image(systemName: "trophy.fill")
                                 .font(.system(size: 36))
                                 .foregroundColor(.yellow)
                         }
-                        
+
                         Text("Goal Completed!")
                             .font(.title2.weight(.bold))
-                        
+
                         if let completedAt = habit.completedAt {
                             Text("Completed on \(completedAt.formatted(date: .long, time: .omitted))")
                                 .font(.subheadline)
@@ -4508,38 +5498,44 @@ struct CompletedHabitDetailSheet: View {
                         }
                     }
                     .padding(.vertical, 20)
-                    
-                    // Grid Preview (for grid style habits)
-                    if habit.visualStyle == .grid {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [Color(red: 0.15, green: 0.12, blue: 0.3), Color(red: 0.2, green: 0.15, blue: 0.35)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
+
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(red: 0.15, green: 0.12, blue: 0.3), Color(red: 0.2, green: 0.15, blue: 0.35)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
                                 )
-                            
+                            )
+
+                        switch habit.visualStyle {
+                        case .grid:
                             ContributionGridView(habit: habit, showFullGrid: true)
                                 .padding(12)
+                        case .text:
+                            TextCounterView(habit: habit)
+                                .padding(12)
+                        case .bar:
+                            TimelineBarView(habit: habit)
+                                .padding(12)
                         }
-                        .padding(.horizontal)
                     }
-                    
+                    .padding(.horizontal)
+
                     // Stats
                     VStack(spacing: 0) {
                         SettingsSection(title: "Journey Stats") {
                             SettingsRow(label: "Started", value: habit.startDate.formatted(date: .abbreviated, time: .omitted))
                             if let completedAt = habit.completedAt {
                                 SettingsRow(label: "Completed", value: completedAt.formatted(date: .abbreviated, time: .omitted))
-                                
+
                                 let days = Calendar.current.dateComponents([.day], from: habit.startDate, to: completedAt).day ?? 0
                                 SettingsRow(label: "Duration", value: "\(days) days")
                             }
-                            SettingsRow(label: "Goal", value: "\(habit.totalDurationCells) \(habit.cellUnit.pluralName)")
+                            SettingsRow(label: "Goal", value: habit.styleGoalSummary)
                         }
-                        
+
                         // Notes Section
                         SettingsSection(title: "My Notes & Journey (\(habit.notes.count))") {
                             if habit.notes.isEmpty {
@@ -4556,7 +5552,7 @@ struct CompletedHabitDetailSheet: View {
                                         Text(note.content)
                                             .font(.body)
                                             .foregroundColor(.primary)
-                                        
+
                                         Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
@@ -4568,7 +5564,7 @@ struct CompletedHabitDetailSheet: View {
                                 }
                             }
                         }
-                        
+
                         // Actions
                         SettingsSection(title: "Actions") {
                             Button {
@@ -4584,7 +5580,7 @@ struct CompletedHabitDetailSheet: View {
                                 .foregroundColor(.orange)
                             }
                             .background(Color(.secondarySystemGroupedBackground))
-                            
+
                             Button(role: .destructive) {
                                 habitManager.deleteHabit(habit)
                                 dismiss()

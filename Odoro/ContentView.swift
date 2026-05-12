@@ -15,6 +15,7 @@ import CoreMotion
 import ActivityKit
 import QuartzCore
 import UIKit
+import StoreKit
 
 // MARK: - Motion Manager for Gyroscope
 class MotionManager: ObservableObject {
@@ -460,12 +461,25 @@ class FocusSoundManager: ObservableObject {
     }
 }
 
+enum PremiumConfig {
+    static let lifetimeProductID = "com.gunisharma.Odoro.premium.lifetime"
+}
+
 // MARK: - App Settings
+@MainActor
 class AppSettings: ObservableObject {
     static let defaultStudyColor: Color = .purple
     static let defaultRestColor: Color = .red
     static let defaultStudyBackgroundColor: Color = Color.green.opacity(0.3)
     static let defaultRestBackgroundColor: Color = Color.orange.opacity(0.7)
+
+    @Published private(set) var premiumUnlocked: Bool
+    @Published private(set) var premiumProduct: Product?
+    @Published private(set) var isPurchasingPremium = false
+    @Published private(set) var isRestoringPurchases = false
+    @Published var premiumStatusMessage: String?
+
+    private var transactionUpdatesTask: Task<Void, Never>?
     
     @Published var studyColor: Color {
         didSet { saveColor(studyColor, key: "studyColor") }
@@ -496,6 +510,7 @@ class AppSettings: ObservableObject {
     }
     
     init() {
+        self.premiumUnlocked = Self.loadPremiumUnlock()
         self.studyColor = Self.loadColor(key: "studyColor") ?? Self.defaultStudyColor
         self.restColor = Self.loadColor(key: "restColor") ?? Self.defaultRestColor
         self.studyBackgroundColor = Self.loadColor(key: "studyBackgroundColor") ?? Self.defaultStudyBackgroundColor
@@ -516,6 +531,21 @@ class AppSettings: ObservableObject {
         } else {
             self.timerNotificationsEnabled = UserDefaults.standard.bool(forKey: "timerNotificationsEnabled")
         }
+
+        transactionUpdatesTask = Task { [weak self] in
+            for await update in StoreKit.Transaction.updates {
+                guard let self else { continue }
+                await self.handleTransactionUpdate(update)
+            }
+        }
+
+        Task {
+            await refreshPremiumStore()
+        }
+    }
+
+    deinit {
+        transactionUpdatesTask?.cancel()
     }
     
     func resetToDefaults() {
@@ -523,6 +553,61 @@ class AppSettings: ObservableObject {
         restColor = Self.defaultRestColor
         studyBackgroundColor = Self.defaultStudyBackgroundColor
         restBackgroundColor = Self.defaultRestBackgroundColor
+    }
+
+    var premiumPriceLabel: String {
+        premiumProduct?.displayPrice ?? "$2.99"
+    }
+
+    func refreshPremiumStore() async {
+        await refreshCurrentEntitlements()
+        await loadPremiumProduct()
+    }
+
+    func purchasePremiumLifetime() async {
+        if premiumProduct == nil {
+            await loadPremiumProduct()
+        }
+
+        guard let premiumProduct else {
+            premiumStatusMessage = "Premium product unavailable. Add \(PremiumConfig.lifetimeProductID) in App Store Connect or your StoreKit config."
+            return
+        }
+
+        isPurchasingPremium = true
+        defer { isPurchasingPremium = false }
+
+        do {
+            let result = try await premiumProduct.purchase()
+            switch result {
+            case .success(let verification):
+                let transaction = try checkVerified(verification)
+                applyPremiumUnlock(true)
+                premiumStatusMessage = "Premium unlocked."
+                await transaction.finish()
+            case .userCancelled:
+                premiumStatusMessage = "Purchase cancelled."
+            case .pending:
+                premiumStatusMessage = "Purchase pending approval."
+            @unknown default:
+                premiumStatusMessage = "Purchase could not be completed."
+            }
+        } catch {
+            premiumStatusMessage = error.localizedDescription
+        }
+    }
+
+    func restorePremiumPurchases() async {
+        isRestoringPurchases = true
+        defer { isRestoringPurchases = false }
+
+        do {
+            try await AppStore.sync()
+            await refreshCurrentEntitlements()
+            premiumStatusMessage = premiumUnlocked ? "Purchases restored." : "No premium purchase was found."
+        } catch {
+            premiumStatusMessage = error.localizedDescription
+        }
     }
     
     private func saveColor(_ color: Color, key: String) {
@@ -538,6 +623,79 @@ class AppSettings: ObservableObject {
             return nil
         }
         return Color(uiColor)
+    }
+
+    private static func loadPremiumUnlock() -> Bool {
+        if let sharedDefaults = UserDefaults(suiteName: WidgetConfig.suiteName),
+           sharedDefaults.object(forKey: WidgetConfig.premiumUnlockedKey) != nil {
+            return sharedDefaults.bool(forKey: WidgetConfig.premiumUnlockedKey)
+        }
+        return UserDefaults.standard.bool(forKey: WidgetConfig.premiumUnlockedKey)
+    }
+
+    private func applyPremiumUnlock(_ unlocked: Bool) {
+        premiumUnlocked = unlocked
+        UserDefaults.standard.set(unlocked, forKey: WidgetConfig.premiumUnlockedKey)
+        UserDefaults(suiteName: WidgetConfig.suiteName)?.set(unlocked, forKey: WidgetConfig.premiumUnlockedKey)
+    }
+
+    private func loadPremiumProduct() async {
+        do {
+            premiumProduct = try await Product.products(for: [PremiumConfig.lifetimeProductID]).first
+        } catch {
+            premiumStatusMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshCurrentEntitlements() async {
+        var unlocked = false
+
+        for await result in StoreKit.Transaction.currentEntitlements {
+            do {
+                let transaction = try checkVerified(result)
+                if transaction.productID == PremiumConfig.lifetimeProductID,
+                   transaction.revocationDate == nil {
+                    unlocked = true
+                    break
+                }
+            } catch {
+                continue
+            }
+        }
+
+        applyPremiumUnlock(unlocked)
+    }
+
+    private func handleTransactionUpdate(_ update: VerificationResult<StoreKit.Transaction>) async {
+        do {
+            let transaction = try checkVerified(update)
+            if transaction.productID == PremiumConfig.lifetimeProductID {
+                applyPremiumUnlock(transaction.revocationDate == nil)
+            }
+            await transaction.finish()
+        } catch {
+            premiumStatusMessage = error.localizedDescription
+        }
+    }
+
+    private func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {
+        switch result {
+        case .verified(let signedType):
+            return signedType
+        case .unverified:
+            throw StoreError.failedVerification
+        }
+    }
+}
+
+enum StoreError: LocalizedError {
+    case failedVerification
+
+    var errorDescription: String? {
+        switch self {
+        case .failedVerification:
+            return "Transaction verification failed."
+        }
     }
 }
 
@@ -1342,6 +1500,77 @@ struct SettingsPanel: View {
     
     var generalSettings: some View {
         VStack(spacing: 20) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Premium", systemImage: settings.premiumUnlocked ? "checkmark.seal.fill" : "sparkles")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    Spacer()
+                    if settings.premiumUnlocked {
+                        Text("Unlocked")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.green)
+                    }
+                }
+
+                Text(
+                    settings.premiumUnlocked
+                    ? "Ads are removed and premium home screen widgets are unlocked."
+                    : "Remove ads forever and unlock Cycle All Habits, Module Deck, Signal Ring, and Terminal Stack home screen widgets."
+                )
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.7))
+
+                HStack(spacing: 12) {
+                    Button {
+                        Task { await settings.purchasePremiumLifetime() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if settings.isPurchasingPremium {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "creditcard.fill")
+                            }
+                            Text(settings.premiumUnlocked ? "Premium Active" : "Unlock \(settings.premiumPriceLabel)")
+                        }
+                        .font(.subheadline.bold())
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(settings.premiumUnlocked ? .green.opacity(0.35) : .blue.opacity(0.45)))
+                    }
+                    .disabled(settings.premiumUnlocked || settings.isPurchasingPremium || settings.isRestoringPurchases)
+
+                    Button {
+                        Task { await settings.restorePremiumPurchases() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if settings.isRestoringPurchases {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            Text("Restore")
+                        }
+                        .font(.subheadline.bold())
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.15)))
+                    }
+                    .disabled(settings.isPurchasingPremium || settings.isRestoringPurchases)
+                }
+
+                if let premiumStatusMessage = settings.premiumStatusMessage {
+                    Text(premiumStatusMessage)
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.65))
+                }
+            }
+            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
+
             VStack(alignment: .leading, spacing: 12) {
                 Text("Fill Colors").font(.headline).foregroundColor(.white)
                 HStack {
@@ -2763,6 +2992,10 @@ struct ContentView: View {
         if savedRestTime > 0 { _restTime = State(initialValue: savedRestTime) }
     }
 
+    private var showsBottomBannerAd: Bool {
+        !settings.premiumUnlocked && (showLogoScreen || !showTimerFlow || !choicesMade)
+    }
+
     var body: some View {
         ZStack {
             if showLogoScreen {
@@ -2782,6 +3015,15 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.25), value: showLogoScreen)
         .animation(.easeInOut(duration: 0.25), value: showTimerFlow)
         .animation(.easeInOut(duration: 0.25), value: choicesMade)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if showsBottomBannerAd {
+                AdaptiveBannerAdView()
+                    .frame(maxWidth: 380)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 2)
+            }
+        }
         .onAppear {
             requestNotificationPermission()
             // Clean up any orphaned Live Activities if not in timer flow

@@ -5,6 +5,7 @@ import WidgetKit
 enum WidgetConfig {
     static let suiteName = "group.com.gunisharma.odoro"
     static let habitsKey = "sharedHabits"
+    static let premiumUnlockedKey = "premiumLifetimeUnlocked"
 }
 
 extension HabitManager {

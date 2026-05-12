@@ -16,6 +16,7 @@
 		1FD3AA432EEB86DB007D380C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1FD3AA422EEB86DB007D380C /* WidgetKit.framework */; };
 		1FD3AA442EEB86DB007D380C /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1FD3A9FE2EEA9F02007D380C /* SwiftUI.framework */; };
 		1FD3AA532EEB86DC007D380C /* OdoroWidgetExtensionExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1FD3AA412EEB86DB007D380C /* OdoroWidgetExtensionExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AD0B00012F7A000000000001 /* GoogleMobileAds in Frameworks */ = {isa = PBXBuildFile; productRef = AD0B00022F7A000000000002 /* GoogleMobileAds */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -114,6 +115,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AD0B00012F7A000000000001 /* GoogleMobileAds in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -199,6 +201,7 @@
 			);
 			name = Odoro;
 			packageProductDependencies = (
+				AD0B00022F7A000000000002 /* GoogleMobileAds */,
 			);
 			productName = Odoro;
 			productReference = 35529FB22E46A8D4002EC013 /* Odoro.app */;
@@ -236,6 +239,9 @@
 			productRefGroup = 35529FB32E46A8D4002EC013 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
+			packageReferences = (
+				AD0B00032F7A000000000003 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */,
+			);
 			targets = (
 				35529FB12E46A8D4002EC013 /* Odoro */,
 				1FD3AA402EEB86DA007D380C /* OdoroWidgetExtensionExtension */,
@@ -291,6 +297,25 @@
 		};
 /* End PBXTargetDependency section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		AD0B00032F7A000000000003 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/googleads/swift-package-manager-google-mobile-ads.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AD0B00022F7A000000000002 /* GoogleMobileAds */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD0B00032F7A000000000003 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */;
+			productName = GoogleMobileAds;
+		};
+/* End XCSwiftPackageProductDependency section */
+
 /* Begin XCBuildConfiguration section */
 		1FD3AA552EEB86DC007D380C /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -300,7 +325,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = OdoroWidgetExtensionExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4.1;
 				DEVELOPMENT_TEAM = 9K4HZ244L6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = OdoroWidgetExtension/Info.plist;
@@ -313,7 +338,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.gunisharma.Odoro.OdoroWidgetExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -336,7 +361,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = OdoroWidgetExtensionExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4.1;
 				DEVELOPMENT_TEAM = 9K4HZ244L6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = OdoroWidgetExtension/Info.plist;
@@ -349,7 +374,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 4.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.gunisharma.Odoro.OdoroWidgetExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

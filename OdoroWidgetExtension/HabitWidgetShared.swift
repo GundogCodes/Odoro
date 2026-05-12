@@ -13,6 +13,7 @@ import SwiftUI
 struct AppGroupConfig {
     static let suiteName = "group.com.gunisharma.odoro"
     static let habitsKey = "sharedHabits"
+    static let premiumUnlockedKey = "premiumLifetimeUnlocked"
 }
 
 // MARK: - Enums (MUST match main app exactly - same raw values)
@@ -31,6 +32,26 @@ enum HabitVisualStyle: String, Codable, CaseIterable {
     case grid = "Progress Grid"
     case bar = "Timeline Bar"
     case text = "Text Counter"
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case Self.grid.rawValue, "Calendar Heatmap", "Streak Strip":
+            self = .grid
+        case Self.bar.rawValue, "Ring Gauge", "Milestone Ladder":
+            self = .bar
+        case Self.text.rawValue:
+            self = .text
+        default:
+            self = .grid
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 enum HabitTimeUnit: String, Codable, CaseIterable {
@@ -306,7 +327,7 @@ struct Habit: Identifiable, Codable {
     var gridPageInfo: (currentPage: Int, totalPages: Int, cellsInCurrentPage: Int, filledInCurrentPage: Int) {
         let totalDuration = totalDurationCells
         let capacity = maxCellCapacity
-        let elapsed = elapsedCells
+        let elapsed = updateMode == .manual ? currentCellIndex : elapsedCells
         
         if totalDuration <= capacity {
             return (0, 1, totalDuration, min(elapsed, totalDuration))
@@ -397,6 +418,195 @@ struct Habit: Identifiable, Codable {
             return max(0, totalCells - filled)
         }
         return filled
+    }
+
+    func styleTargetDate(from reference: Date? = nil) -> Date? {
+        let ref = reference ?? referenceDate
+
+        if durationType == .toTargetDate, let targetDate {
+            return targetDate
+        }
+
+        switch visualStyle {
+        case .grid:
+            guard durationType != .indefinite else { return nil }
+            return date(byAdding: cellUnit, value: customDuration, to: ref)
+        case .bar:
+            return date(byAdding: timelineTickUnit, value: timelineDuration, to: ref)
+        case .text:
+            return date(byAdding: timeUnit, value: textCounterDuration, to: ref)
+        }
+    }
+
+    func styleProgressUnits(at date: Date = Date()) -> (elapsed: Int, total: Int)? {
+        switch visualStyle {
+        case .grid:
+            guard durationType != .indefinite else { return nil }
+            let total = max(1, totalDurationCells)
+            let elapsed = updateMode == .manual ? manuallyFilledCells.count : elapsedCells
+            return (min(max(elapsed, 0), total), total)
+        case .bar:
+            let total: Int
+            if durationType == .toTargetDate, let targetDate {
+                total = max(1, unitsBetween(from: referenceDate, to: targetDate, unit: timelineTickUnit))
+            } else {
+                total = max(1, timelineDuration)
+            }
+            let elapsed = unitsBetween(from: referenceDate, to: date, unit: timelineTickUnit)
+            return (min(max(elapsed, 0), total), total)
+        case .text:
+            let total: Int
+            if durationType == .toTargetDate, let targetDate {
+                total = max(1, unitsBetween(from: referenceDate, to: targetDate, unit: timeUnit))
+            } else {
+                total = max(1, textCounterDuration)
+            }
+            let elapsed = unitsBetween(from: referenceDate, to: date, unit: timeUnit)
+            return (min(max(elapsed, 0), total), total)
+        }
+    }
+
+    func styleProgressPercentage(at date: Date = Date()) -> Double? {
+        guard let units = styleProgressUnits(at: date), units.total > 0 else { return nil }
+        return min(max(Double(units.elapsed) / Double(units.total) * 100, 0), 100)
+    }
+
+    var styleProjectedEndDescription: String {
+        guard let targetDate = styleTargetDate() else { return "—" }
+        guard targetDate > Date() else { return "Reached" }
+
+        switch visualStyle {
+        case .text:
+            return targetDate.formatted(date: .abbreviated, time: .shortened)
+        case .bar:
+            switch timelineTickUnit {
+            case .minute, .hour:
+                return targetDate.formatted(date: .abbreviated, time: .shortened)
+            case .day, .week, .month, .year:
+                return targetDate.formatted(date: .abbreviated, time: .omitted)
+            }
+        case .grid:
+            return targetDate.formatted(date: .abbreviated, time: .omitted)
+        }
+    }
+
+    var styleGoalSummary: String {
+        switch visualStyle {
+        case .grid:
+            switch durationType {
+            case .customRange:
+                return "\(totalDurationCells) \(cellUnit.pluralName)"
+            case .toTargetDate:
+                if let targetDate {
+                    return "Until \(targetDate.formatted(date: .abbreviated, time: .omitted))"
+                }
+                return "\(totalDurationCells) \(cellUnit.pluralName)"
+            case .indefinite:
+                return "Repeating \(maxCellCapacity)-cell cycle"
+            }
+        case .bar:
+            if durationType == .toTargetDate, let targetDate {
+                return "Until \(targetDate.formatted(date: .abbreviated, time: .shortened))"
+            }
+            return "\(timelineDuration) \(timelineTickUnit.displayName.lowercased())"
+        case .text:
+            if durationType == .toTargetDate, let targetDate {
+                return "Until \(targetDate.formatted(date: .abbreviated, time: .shortened))"
+            }
+            return "\(textCounterDuration) \(timeUnit.rawValue.lowercased())"
+        }
+    }
+
+    private func date(byAdding unit: CellUnit, value: Int, to date: Date) -> Date? {
+        let calendar = Calendar.current
+        switch unit {
+        case .day:
+            return calendar.date(byAdding: .day, value: value, to: date)
+        case .week:
+            return calendar.date(byAdding: .weekOfYear, value: value, to: date)
+        case .month:
+            return calendar.date(byAdding: .month, value: value, to: date)
+        case .year:
+            return calendar.date(byAdding: .year, value: value, to: date)
+        }
+    }
+
+    private func date(byAdding unit: TimelineTickUnit, value: Int, to date: Date) -> Date? {
+        let calendar = Calendar.current
+        switch unit {
+        case .minute:
+            return calendar.date(byAdding: .minute, value: value, to: date)
+        case .hour:
+            return calendar.date(byAdding: .hour, value: value, to: date)
+        case .day:
+            return calendar.date(byAdding: .day, value: value, to: date)
+        case .week:
+            return calendar.date(byAdding: .weekOfYear, value: value, to: date)
+        case .month:
+            return calendar.date(byAdding: .month, value: value, to: date)
+        case .year:
+            return calendar.date(byAdding: .year, value: value, to: date)
+        }
+    }
+
+    private func date(byAdding unit: HabitTimeUnit, value: Int, to date: Date) -> Date? {
+        let calendar = Calendar.current
+        switch unit {
+        case .seconds:
+            return calendar.date(byAdding: .second, value: value, to: date)
+        case .minutes:
+            return calendar.date(byAdding: .minute, value: value, to: date)
+        case .hours:
+            return calendar.date(byAdding: .hour, value: value, to: date)
+        case .days:
+            return calendar.date(byAdding: .day, value: value, to: date)
+        case .weeks:
+            return calendar.date(byAdding: .weekOfYear, value: value, to: date)
+        case .months:
+            return calendar.date(byAdding: .month, value: value, to: date)
+        case .years:
+            return calendar.date(byAdding: .year, value: value, to: date)
+        }
+    }
+
+    private func unitsBetween(from startDate: Date, to endDate: Date, unit: TimelineTickUnit) -> Int {
+        let calendar = Calendar.current
+        switch unit {
+        case .minute:
+            return calendar.dateComponents([.minute], from: startDate, to: endDate).minute ?? 0
+        case .hour:
+            return calendar.dateComponents([.hour], from: startDate, to: endDate).hour ?? 0
+        case .day:
+            return calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+        case .week:
+            let days = calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+            return days / 7
+        case .month:
+            return calendar.dateComponents([.month], from: startDate, to: endDate).month ?? 0
+        case .year:
+            return calendar.dateComponents([.year], from: startDate, to: endDate).year ?? 0
+        }
+    }
+
+    private func unitsBetween(from startDate: Date, to endDate: Date, unit: HabitTimeUnit) -> Int {
+        let calendar = Calendar.current
+        switch unit {
+        case .seconds:
+            return calendar.dateComponents([.second], from: startDate, to: endDate).second ?? 0
+        case .minutes:
+            return calendar.dateComponents([.minute], from: startDate, to: endDate).minute ?? 0
+        case .hours:
+            return calendar.dateComponents([.hour], from: startDate, to: endDate).hour ?? 0
+        case .days:
+            return calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+        case .weeks:
+            let days = calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+            return days / 7
+        case .months:
+            return calendar.dateComponents([.month], from: startDate, to: endDate).month ?? 0
+        case .years:
+            return calendar.dateComponents([.year], from: startDate, to: endDate).year ?? 0
+        }
     }
 }
 
