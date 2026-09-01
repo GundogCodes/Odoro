@@ -92,6 +92,12 @@ enum HabitWidgetSize: String, Codable, CaseIterable {
     var displayName: String { rawValue }
 }
 
+enum PremiumWidgetStyle: String, Codable, CaseIterable {
+    case moduleDeck
+    case signalRing
+    case terminalStack
+}
+
 enum CellUnit: String, Codable, CaseIterable {
     case day = "Day"
     case week = "Week"
@@ -186,6 +192,7 @@ struct Habit: Identifiable, Codable {
     var type: HabitType
     var updateMode: HabitUpdateMode
     var visualStyle: HabitVisualStyle
+    var premiumWidgetStyle: PremiumWidgetStyle?
     var widgetSize: HabitWidgetSize
 
     // Grid settings
@@ -233,7 +240,8 @@ struct Habit: Identifiable, Codable {
         type = try container.decodeIfPresent(HabitType.self, forKey: .type) ?? .countUp
         updateMode = try container.decodeIfPresent(HabitUpdateMode.self, forKey: .updateMode) ?? .auto
         visualStyle = try container.decodeIfPresent(HabitVisualStyle.self, forKey: .visualStyle) ?? .grid
-        widgetSize = try container.decodeIfPresent(HabitWidgetSize.self, forKey: .widgetSize) ?? .fullMedium
+        premiumWidgetStyle = try container.decodeIfPresent(PremiumWidgetStyle.self, forKey: .premiumWidgetStyle)
+        widgetSize = try container.decodeIfPresent(HabitWidgetSize.self, forKey: .widgetSize) ?? .full
         cellUnit = try container.decodeIfPresent(CellUnit.self, forKey: .cellUnit) ?? .day
         durationType = try container.decodeIfPresent(GridDurationType.self, forKey: .durationType) ?? .customRange
         customDuration = try container.decodeIfPresent(Int.self, forKey: .customDuration) ?? 30

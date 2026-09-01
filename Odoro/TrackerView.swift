@@ -871,32 +871,7 @@ class HabitManager: ObservableObject {
 
     init() {
         load()
-        debugWidgetSync()
-    }
-    func debugWidgetSync() {
-        print("🔍 DEBUG: Checking App Group...")
-
-        guard let defaults = UserDefaults(suiteName: "group.com.gunisharma.odoro") else {
-            print("❌ Cannot access App Group - check App Group is enabled for main app target")
-            return
-        }
-
-        // Try to save
-        if let encoded = try? JSONEncoder().encode(habits) {
-            defaults.set(encoded, forKey: "sharedHabits")
-            print("✅ Saved \(habits.count) habits to App Group (\(encoded.count) bytes)")
-        }
-
-        // Try to read back
-        if let data = defaults.data(forKey: "sharedHabits"),
-           let decoded = try? JSONDecoder().decode([Habit].self, from: data) {
-            print("✅ Read back \(decoded.count) habits from App Group")
-            for habit in decoded {
-                print("   - \(habit.name) (completed: \(habit.isCompleted))")
-            }
-        } else {
-            print("❌ Could not read habits from App Group")
-        }
+        syncToWidget()
     }
 
     private let backupKey = "habits_backup"

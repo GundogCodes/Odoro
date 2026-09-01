@@ -11,16 +11,60 @@ import GoogleMobileAds
 #endif
 
 enum AdMobConfiguration {
-    static let bannerAdUnitID = "ca-app-pub-3940256099942544/2435281174"
+    private static let appIDKey = "GADApplicationIdentifier"
+    private static let bannerAdUnitIDKey = "OdoroBannerAdUnitID"
+    private static let googleSampleAppID = "ca-app-pub-3940256099942544~1458002511"
+    private static let googleSampleBannerAdUnitID = "ca-app-pub-3940256099942544/2435281174"
+
+    static var appID: String? {
+        sanitizedID(
+            Bundle.main.object(forInfoDictionaryKey: appIDKey) as? String,
+            sampleID: googleSampleAppID
+        )
+    }
+
+    static var bannerAdUnitID: String? {
+        sanitizedID(
+            Bundle.main.object(forInfoDictionaryKey: bannerAdUnitIDKey) as? String,
+            sampleID: googleSampleBannerAdUnitID
+        )
+    }
+
+    static var canServeAds: Bool {
+        appID != nil && bannerAdUnitID != nil
+    }
+
+    private static func sanitizedID(_ rawValue: String?, sampleID: String) -> String? {
+        guard let rawValue else { return nil }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            !trimmed.isEmpty,
+            !trimmed.hasPrefix("$("),
+            !trimmed.hasPrefix("REPLACE_WITH_")
+        else {
+            return nil
+        }
+
+        #if DEBUG
+        return trimmed
+        #else
+        return trimmed == sampleID ? nil : trimmed
+        #endif
+    }
 }
 
 struct AdaptiveBannerAdView: View {
     var body: some View {
-        #if canImport(GoogleMobileAds)
-        GoogleAdaptiveBannerAdView(adUnitID: AdMobConfiguration.bannerAdUnitID)
-        #else
-        EmptyView()
-        #endif
+        if let adUnitID = AdMobConfiguration.bannerAdUnitID {
+            #if canImport(GoogleMobileAds)
+            GoogleAdaptiveBannerAdView(adUnitID: adUnitID)
+            #else
+            EmptyView()
+            #endif
+        } else {
+            EmptyView()
+        }
     }
 }
 

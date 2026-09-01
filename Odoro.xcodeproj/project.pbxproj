@@ -235,13 +235,13 @@
 			);
 			mainGroup = 35529FA92E46A8D4002EC013;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AD0B00032F7A000000000003 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 35529FB32E46A8D4002EC013 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			packageReferences = (
-				AD0B00032F7A000000000003 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */,
-			);
 			targets = (
 				35529FB12E46A8D4002EC013 /* Odoro */,
 				1FD3AA402EEB86DA007D380C /* OdoroWidgetExtensionExtension */,
@@ -297,25 +297,6 @@
 		};
 /* End PBXTargetDependency section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		AD0B00032F7A000000000003 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/googleads/swift-package-manager-google-mobile-ads.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 12.0.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		AD0B00022F7A000000000002 /* GoogleMobileAds */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AD0B00032F7A000000000003 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */;
-			productName = GoogleMobileAds;
-		};
-/* End XCSwiftPackageProductDependency section */
-
 /* Begin XCBuildConfiguration section */
 		1FD3AA552EEB86DC007D380C /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -332,7 +313,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = OdoroWidgetExtension;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -368,7 +349,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = OdoroWidgetExtension;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -510,6 +491,8 @@
 		35529FBE2E46A8D5002EC013 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ADMOB_APP_ID = "ca-app-pub-3940256099942544~1458002511";
+				ADMOB_BANNER_AD_UNIT_ID = "ca-app-pub-3940256099942544/2435281174";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Odoro/Odoro.entitlements;
@@ -520,9 +503,9 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Odoro/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
-				INFOPLIST_KEY_NSCameraUsageDescription = "<key>NSPhotoLibraryAddUsageDescription</key>\n<string>Odoro needs photo library access to save your study timelapse videos.</string>";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Odoro needs camera access to create a timelapse of your study session.";
 				INFOPLIST_KEY_NSMotionUsageDescription = "Odoro uses motion to create a fluid animation effect for the timer.";
-				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "<key>NSCameraUsageDescription</key>\n<string>Odoro needs camera access to create a timelapse of your study session.</string>\n";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Odoro needs photo library access to save your study timelapse videos.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -549,6 +532,8 @@
 		35529FBF2E46A8D5002EC013 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ADMOB_APP_ID = REPLACE_WITH_REAL_ADMOB_APP_ID;
+				ADMOB_BANNER_AD_UNIT_ID = REPLACE_WITH_REAL_BANNER_AD_UNIT_ID;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Odoro/Odoro.entitlements;
@@ -559,9 +544,9 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Odoro/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
-				INFOPLIST_KEY_NSCameraUsageDescription = "<key>NSPhotoLibraryAddUsageDescription</key>\n<string>Odoro needs photo library access to save your study timelapse videos.</string>";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Odoro needs camera access to create a timelapse of your study session.";
 				INFOPLIST_KEY_NSMotionUsageDescription = "Odoro uses motion to create a fluid animation effect for the timer.";
-				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "<key>NSCameraUsageDescription</key>\n<string>Odoro needs camera access to create a timelapse of your study session.</string>\n";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Odoro needs photo library access to save your study timelapse videos.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -616,6 +601,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AD0B00032F7A000000000003 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/googleads/swift-package-manager-google-mobile-ads.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AD0B00022F7A000000000002 /* GoogleMobileAds */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AD0B00032F7A000000000003 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */;
+			productName = GoogleMobileAds;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 35529FAA2E46A8D4002EC013 /* Project object */;
 }

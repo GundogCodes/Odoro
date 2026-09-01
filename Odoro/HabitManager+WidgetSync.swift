@@ -13,13 +13,17 @@ extension HabitManager {
     /// Call this after any habit data changes to sync to the widget
     func syncToWidget() {
         guard let userDefaults = UserDefaults(suiteName: WidgetConfig.suiteName) else {
+            #if DEBUG
             print("❌ syncToWidget: Failed to access App Group")
+            #endif
             return
         }
         
         if let encoded = try? JSONEncoder().encode(habits) {
             userDefaults.set(encoded, forKey: WidgetConfig.habitsKey)
+            #if DEBUG
             print("✅ syncToWidget: Saved \(habits.count) habits to App Group")
+            #endif
         }
         
         WidgetCenter.shared.reloadTimelines(ofKind: "HabitWidget")

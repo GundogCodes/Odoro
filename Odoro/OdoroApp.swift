@@ -17,7 +17,9 @@ struct OdoroApp: App {
 
     init() {
         #if canImport(GoogleMobileAds)
-        MobileAds.shared.start()
+        if AdMobConfiguration.canServeAds {
+            MobileAds.shared.start()
+        }
         #endif
     }
     

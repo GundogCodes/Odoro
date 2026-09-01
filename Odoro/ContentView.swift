@@ -75,7 +75,6 @@ struct FluidShape: Shape {
         var path = Path()
         
         let fillWidth = rect.width * progress
-        let midY = rect.height / 2
         
         // Start at bottom left
         path.move(to: CGPoint(x: 0, y: rect.height))
@@ -2885,7 +2884,7 @@ struct TimerScreen: View {
     }
     
     func updateTimerFromBackground() {
-        guard let backgroundTime = backgroundTime, timerRunning, let endTime = timerEndTime else { return }
+        guard backgroundTime != nil, timerRunning, let endTime = timerEndTime else { return }
         
         // Calculate remaining time from the original endTime
         let remaining = Int(endTime.timeIntervalSince(Date()))
@@ -2993,7 +2992,7 @@ struct ContentView: View {
     }
 
     private var showsBottomBannerAd: Bool {
-        !settings.premiumUnlocked && (showLogoScreen || !showTimerFlow || !choicesMade)
+        AdMobConfiguration.canServeAds && !settings.premiumUnlocked && (showLogoScreen || !showTimerFlow || !choicesMade)
     }
 
     var body: some View {

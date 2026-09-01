@@ -40,6 +40,9 @@ enum TimelineTickUnit: String, Codable, CaseIterable {
 enum HabitWidgetSize: String, Codable, CaseIterable {
     case half = "Small", fullMedium = "Medium", full = "Large"
 }
+enum PremiumWidgetStyle: String, Codable, CaseIterable {
+    case moduleDeck, signalRing, terminalStack
+}
 enum CellUnit: String, Codable, CaseIterable {
     case day = "Day", week = "Week", month = "Month", year = "Year"
 }
@@ -78,6 +81,7 @@ struct Habit: Identifiable, Codable {
     var type: HabitType
     var updateMode: HabitUpdateMode
     var visualStyle: HabitVisualStyle
+    var premiumWidgetStyle: PremiumWidgetStyle?
     var widgetSize: HabitWidgetSize
     var cellUnit: CellUnit
     var durationType: GridDurationType
@@ -108,6 +112,7 @@ struct Habit: Identifiable, Codable {
         type = try container.decodeIfPresent(HabitType.self, forKey: .type) ?? .countUp
         updateMode = try container.decodeIfPresent(HabitUpdateMode.self, forKey: .updateMode) ?? .auto
         visualStyle = try container.decodeIfPresent(HabitVisualStyle.self, forKey: .visualStyle) ?? .grid
+        premiumWidgetStyle = try container.decodeIfPresent(PremiumWidgetStyle.self, forKey: .premiumWidgetStyle)
         widgetSize = try container.decodeIfPresent(HabitWidgetSize.self, forKey: .widgetSize) ?? .full
         cellUnit = try container.decodeIfPresent(CellUnit.self, forKey: .cellUnit) ?? .day
         durationType = try container.decodeIfPresent(GridDurationType.self, forKey: .durationType) ?? .customRange
