@@ -55,3 +55,32 @@ struct SelectHabitIntent: WidgetConfigurationIntent {
     @Parameter(title: "Habit")
     var habit: HabitEntity?
 }
+
+// MARK: - Cycling Widget Configuration
+
+enum HabitCycleInterval: String, AppEnum {
+    case fifteenMinutes, thirtyMinutes, oneHour
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Cycle Interval"
+    static var caseDisplayRepresentations: [HabitCycleInterval: DisplayRepresentation] = [
+        .fifteenMinutes: "15 minutes",
+        .thirtyMinutes: "30 minutes",
+        .oneHour: "1 hour"
+    ]
+
+    var seconds: TimeInterval {
+        switch self {
+        case .fifteenMinutes: return 15 * 60
+        case .thirtyMinutes: return 30 * 60
+        case .oneHour: return 60 * 60
+        }
+    }
+}
+
+struct CycleHabitsIntent: WidgetConfigurationIntent {
+    static var title: LocalizedStringResource = "Cycle Habits"
+    static var description: IntentDescription = "Rotate through all active habits in list order."
+
+    @Parameter(title: "Change Habit Every", default: .fifteenMinutes)
+    var interval: HabitCycleInterval
+}

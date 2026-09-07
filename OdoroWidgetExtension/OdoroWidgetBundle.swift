@@ -16,5 +16,6 @@ struct OdoroWidgetBundle: WidgetBundle {
         
         // Home screen widgets for habits
         HabitWidget()
+        CyclingHabitWidget()
     }
 }

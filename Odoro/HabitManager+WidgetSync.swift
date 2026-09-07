@@ -22,5 +22,6 @@ extension HabitManager {
         }
         
         WidgetCenter.shared.reloadTimelines(ofKind: "HabitWidget")
+        WidgetCenter.shared.reloadTimelines(ofKind: "CyclingHabitWidget")
     }
 }

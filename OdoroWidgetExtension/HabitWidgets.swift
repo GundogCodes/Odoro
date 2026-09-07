@@ -58,10 +58,10 @@ struct HabitWidgetView: View {
     
     var body: some View {
         Group {
-            if let habit = entry.habit {
+            if let habit = displayHabit {
                 switch habit.visualStyle {
                 case .grid:
-                    WidgetGridView(habit: habit, family: family)
+                    WidgetGridView(habit: gridHabit(habit), family: family)
                 case .bar:
                     WidgetTimelineBarView(habit: habit, family: family)
                 case .text:
@@ -71,6 +71,21 @@ struct HabitWidgetView: View {
                 EmptyWidgetView()
             }
         }
+    }
+    private var displayHabit: Habit? {
+        guard var habit = entry.habit else { return nil }
+        habit.timelineDate = entry.date
+        return habit
+    }
+
+    private func gridHabit(_ habit: Habit) -> Habit {
+        var result = habit
+        switch family {
+        case .systemSmall: result.widgetSize = .half
+        case .systemLarge: result.widgetSize = .full
+        default: result.widgetSize = .fullMedium
+        }
+        return result
     }
 }
 
@@ -123,61 +138,27 @@ struct WidgetGridView: View {
         endPoint: .bottomTrailing
     )
     
-    private var filledCellsForDisplay: Int {
-        return habit.filledCellsForDisplay()
-    }
-    
-    private var progressLabel: String {
-        let pageInfo = habit.gridPageInfo
-        let totalDuration = habit.totalDurationCells
-
-        let unitSuffix: String = {
-            switch habit.cellUnit {
-            case .day: return "d"
-            case .week: return "w"
-            case .month: return "mo"
-            case .year: return "y"
-            }
-        }()
-
-        if habit.updateMode == .manual {
-            let filledCount = habit.manuallyFilledCells.count
-            if habit.durationType == .indefinite {
-                let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
-                return "\(filledCount)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
-            }
-            return "\(filledCount)/\(totalDuration)"
-        }
-
-        let elapsed = habit.elapsedCells
-
-        if habit.durationType == .indefinite {
-            let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
-            return "\(pageInfo.filledInCurrentPage)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
-        }
-
-        if pageInfo.totalPages > 1 {
-            return "\(elapsed)/\(totalDuration)\(unitSuffix) (\(pageInfo.currentPage + 1)/\(pageInfo.totalPages))"
-        }
-
-        return "\(elapsed)/\(totalDuration)\(unitSuffix)"
-    }
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: habit.icon)
-                    .font(isSmall ? .caption : .subheadline)
+                    .font(.caption2)
                     .foregroundColor(habit.color.color)
                 Text(habit.name)
-                    .font(isSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                    .font(.caption2.weight(.medium))
                     .foregroundColor(textColor)
                     .lineLimit(1)
-                Spacer()
-                Text(progressLabel)
-                    .font(isSmall ? .caption2 : .caption)
-                    .foregroundColor(textColor.opacity(0.7))
+                Spacer(minLength: 4)
+                if !isSmall {
+                    Text(habit.compactGridProgressLabel)
+                        .font(.caption2)
+                        .foregroundColor(textColor.opacity(0.6))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .layoutPriority(1)
+                        .accessibilityLabel(habit.gridProgressLabel)
+                }
             }
             
             // Grid
@@ -217,8 +198,18 @@ struct WidgetGridView: View {
                     }
                 }
             }
+
+            if isSmall {
+                Text(habit.compactGridProgressLabel)
+                    .font(.system(size: 10))
+                    .foregroundColor(textColor.opacity(0.6))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .accessibilityLabel(habit.gridProgressLabel)
+            }
+
         }
-        .padding(12)
+        .padding(8)
     }
     
     @ViewBuilder
@@ -251,29 +242,11 @@ struct WidgetGridView: View {
 
     private func cellColor(at index: Int) -> Color {
         let emptyColor = colorScheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.1)
-
-        if habit.updateMode == .manual {
-            if habit.manuallyFilledCells.contains(pageOffset + index) {
-                return habit.color.color
-            }
-            return emptyColor
-        } else {
-            let isFilled = isCellFilled(at: index)
-            return isFilled ? habit.color.color : emptyColor
-        }
+        return isCellFilled(at: index) ? habit.color.color : emptyColor
     }
 
     private func isCellFilled(at index: Int) -> Bool {
-        if habit.updateMode == .manual {
-            return habit.manuallyFilledCells.contains(pageOffset + index)
-        }
-
-        if habit.type == .countdown {
-            let emptyCount = habit.totalCells - filledCellsForDisplay
-            return index >= emptyCount && index < habit.totalCells
-        } else {
-            return index < filledCellsForDisplay
-        }
+        habit.gridCellIsFilled(at: pageOffset + index)
     }
 }
 
@@ -283,6 +256,10 @@ struct WidgetTextCounterView: View {
     let family: WidgetFamily
     @Environment(\.colorScheme) var colorScheme
     
+    private var isCountingDown: Bool {
+        habit.durationType != .indefinite && habit.type == .countdown
+    }
+
     private var isSmall: Bool { family == .systemSmall }
     private var isLarge: Bool { family == .systemLarge }
     
@@ -291,7 +268,7 @@ struct WidgetTextCounterView: View {
     }
     
     private var calculatedTargetDate: Date {
-        if let target = habit.targetDate { return target }
+        if habit.durationType == .toTargetDate, let target = habit.targetDate { return target }
         let calendar = Calendar.current
         let duration = habit.textCounterDuration
         
@@ -307,8 +284,8 @@ struct WidgetTextCounterView: View {
     }
 
     private var timeInterval: TimeInterval {
-        let now = Date()
-        if habit.type == .countdown {
+        let now = habit.displayDate
+        if isCountingDown {
             return calculatedTargetDate.timeIntervalSince(now)
         } else {
             return now.timeIntervalSince(habit.referenceDate)
@@ -318,9 +295,9 @@ struct WidgetTextCounterView: View {
     private var progressToTarget: CGFloat {
         let totalInterval = calculatedTargetDate.timeIntervalSince(habit.referenceDate)
         guard totalInterval > 0 else { return 0 }
-        let elapsed = Date().timeIntervalSince(habit.referenceDate)
+        let elapsed = habit.displayDate.timeIntervalSince(habit.referenceDate)
         let progress = CGFloat(min(max(elapsed / totalInterval, 0), 1))
-        return habit.type == .countdown ? 1.0 - progress : progress
+        return isCountingDown ? 1.0 - progress : progress
     }
     
     private var primaryValue: String {
@@ -353,8 +330,8 @@ struct WidgetTextCounterView: View {
 
         // For months/years, use calendar-based calculation for accuracy (matches in-app)
         let calendar = Calendar.current
-        let referenceDate = habit.type == .countdown ? Date() : habit.referenceDate
-        let targetForCalc = habit.type == .countdown ? calculatedTargetDate : Date()
+        let referenceDate = isCountingDown ? habit.displayDate : habit.referenceDate
+        let targetForCalc = isCountingDown ? calculatedTargetDate : habit.displayDate
         let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: referenceDate, to: targetForCalc)
 
         let calendarYears = abs(components.year ?? 0)
@@ -396,7 +373,7 @@ struct WidgetTextCounterView: View {
                     .foregroundColor(textColor)
                     .lineLimit(1)
                 Spacer()
-                Text(habit.type == .countdown ? "remaining" : "elapsed")
+                Text(habit.durationType == .indefinite ? "Indefinite" : (isCountingDown ? "remaining" : "elapsed"))
                     .font(.caption2)
                     .foregroundColor(textColor.opacity(0.5))
             }
@@ -504,7 +481,7 @@ struct WidgetTimelineBarView: View {
     }
 
     private var elapsedTicks: Int {
-        let ticks = calculateTicksBetween(from: habit.referenceDate, to: Date())
+        let ticks = calculateTicksBetween(from: habit.referenceDate, to: habit.displayDate)
         return max(0, min(ticks, totalTicks))
     }
     

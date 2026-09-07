@@ -197,6 +197,18 @@ struct Habit: Identifiable, Codable {
 
     var createdAt: Date
 
+    // Rendering context only: never written into saved habit data.
+    var timelineDate: Date? = nil
+    var displayDate: Date { completedAt ?? timelineDate ?? Date() }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, icon, type, updateMode, visualStyle, widgetSize
+        case cellUnit, durationType, customDuration, targetDate, textCounterDuration
+        case timelineTickUnit, timelineDuration, currentValue, cycleCount, manuallyFilledCells
+        case lastResetDate, resetHistory, notes, isCompleted, completedAt, goalNotificationSent
+        case timeUnit, color, createdAt
+    }
+
     // Computed property (same as main app)
     var startDate: Date { createdAt }
     var referenceDate: Date { lastResetDate ?? createdAt }
@@ -272,7 +284,7 @@ struct Habit: Identifiable, Codable {
             return currentValue
         }
         let calendar = Calendar.current
-        let now = Date()
+        let now = displayDate
         let referenceDate = lastResetDate ?? startDate
         switch cellUnit {
         case .day:
@@ -289,40 +301,103 @@ struct Habit: Identifiable, Codable {
     
     var currentCellIndex: Int {
         let calendar = Calendar.current
-        let now = Date()
+        let now = displayDate
         switch cellUnit {
         case .day:
-            return max(0, calendar.dateComponents([.day], from: startDate, to: now).day ?? 0)
+            return max(0, calendar.dateComponents([.day], from: referenceDate, to: now).day ?? 0)
         case .week:
-            let days = calendar.dateComponents([.day], from: startDate, to: now).day ?? 0
+            let days = calendar.dateComponents([.day], from: referenceDate, to: now).day ?? 0
             return max(0, days / 7)
         case .month:
-            return max(0, calendar.dateComponents([.month], from: startDate, to: now).month ?? 0)
+            return max(0, calendar.dateComponents([.month], from: referenceDate, to: now).month ?? 0)
         case .year:
-            return max(0, calendar.dateComponents([.year], from: startDate, to: now).year ?? 0)
+            return max(0, calendar.dateComponents([.year], from: referenceDate, to: now).year ?? 0)
         }
     }
     
+    // Keep these calculations identical in the app and widget models.
+    var gridProgressCells: Int {
+        let progress = max(0, elapsedCells)
+        return durationType == .indefinite ? progress : min(progress, totalDurationCells)
+    }
+
+    var gridProgressLabel: String {
+        let unit: String
+        switch cellUnit {
+        case .day: unit = "d"
+        case .week: unit = "w"
+        case .month: unit = "mo"
+        case .year: unit = "y"
+        }
+        let progress = gridProgressCells
+        if durationType == .indefinite {
+            return "\(progress)\(unit) completed"
+        }
+        if type == .countdown {
+            return "\(totalDurationCells - progress)\(unit) left · \(progress)\(unit) completed"
+        }
+        return "\(progress)/\(totalDurationCells)\(unit) completed"
+    }
+
+    var compactGridProgressLabel: String {
+        gridProgressLabel.replacingOccurrences(of: " completed", with: "")
+    }
+
+    // Manual cells belong to calendar positions, so missed days remain visible.
+    // Auto cells advance continuously; indefinite pages never have a final page.
     var gridPageInfo: (currentPage: Int, totalPages: Int, cellsInCurrentPage: Int, filledInCurrentPage: Int) {
-        let totalDuration = totalDurationCells
         let capacity = maxCellCapacity
-        let elapsed = elapsedCells
-        
-        if totalDuration <= capacity {
-            return (0, 1, totalDuration, min(elapsed, totalDuration))
+        let position = updateMode == .manual ? currentCellIndex : gridProgressCells
+        if durationType == .indefinite {
+            let page = position / capacity
+            let offset = page * capacity
+            let filled = updateMode == .manual
+                ? manuallyFilledCells.filter { $0 >= offset && $0 < offset + capacity }.count
+                : position % capacity
+            return (page, page + 1, capacity, filled)
         }
-        
-        let totalPages = Int(ceil(Double(totalDuration) / Double(capacity)))
-        let currentPage = min(elapsed / capacity, totalPages - 1)
-        let cellsBeforeThisPage = currentPage * capacity
-        let remainingCells = totalDuration - cellsBeforeThisPage
-        let cellsInCurrentPage = min(remainingCells, capacity)
-        let elapsedInCurrentPage = elapsed - cellsBeforeThisPage
-        let filledInCurrentPage = max(0, min(elapsedInCurrentPage, cellsInCurrentPage))
-        
-        return (currentPage, totalPages, cellsInCurrentPage, filledInCurrentPage)
+
+        let total = totalDurationCells
+        let pages = (total + capacity - 1) / capacity
+        let page = min(position / capacity, pages - 1)
+        let offset = page * capacity
+        let count = min(capacity, total - offset)
+        let filled = updateMode == .manual
+            ? manuallyFilledCells.filter { $0 >= offset && $0 < offset + count }.count
+            : max(0, min(gridProgressCells - offset, count))
+        return (page, pages, count, filled)
     }
-    
+
+    // Finite details include the entire goal. Indefinite details grow in rows,
+    // with two rows of future cells beyond the current progression.
+    var fullGridCellCount: Int {
+        guard durationType == .indefinite else { return totalDurationCells }
+        let extent = updateMode == .manual
+            ? max(currentCellIndex + 1, (manuallyFilledCells.max() ?? -1) + 1)
+            : gridProgressCells
+        return max(45, ((extent + 14) / 15) * 15 + 30)
+    }
+
+    func gridCellIsFilled(at index: Int, fullGrid: Bool = false) -> Bool {
+        var progressIndex = index
+        if type == .countdown {
+            // Reverse visual order only; saved progress keeps its original indices.
+            if fullGrid {
+                progressIndex = fullGridCellCount - 1 - index
+            } else {
+                let pageStart = (index / maxCellCapacity) * maxCellCapacity
+                let pageCount = durationType == .indefinite
+                    ? maxCellCapacity
+                    : min(maxCellCapacity, totalDurationCells - pageStart)
+                progressIndex = pageStart + pageCount - 1 - (index - pageStart)
+            }
+        }
+        let completed = updateMode == .manual
+            ? manuallyFilledCells.contains(progressIndex)
+            : progressIndex < gridProgressCells
+        return type == .countdown ? !completed : completed
+    }
+
     // Goal cell index within current page (nil for indefinite duration)
     var goalCellIndexInCurrentPage: Int? {
         // No goal cell for indefinite duration
@@ -362,7 +437,7 @@ struct Habit: Identifiable, Codable {
             let maxRows = 7
             let idealRows = max(1, Int(ceil(sqrt(Double(total) / 2.0))))
             let idealCols = Int(ceil(Double(total) / Double(idealRows)))
-            let cols = min(idealCols, maxCols)
+            let cols = min(max(idealCols, (total + maxRows - 1) / maxRows), maxCols)
             let rows = min(Int(ceil(Double(total) / Double(cols))), maxRows)
             return (cols, rows)
         case .full:
@@ -370,7 +445,7 @@ struct Habit: Identifiable, Codable {
             let maxRows = 14
             let idealRows = max(1, Int(ceil(sqrt(Double(total) / 1.5))))
             let idealCols = Int(ceil(Double(total) / Double(idealRows)))
-            let cols = min(idealCols, maxCols)
+            let cols = min(max(idealCols, (total + maxRows - 1) / maxRows), maxCols)
             let rows = min(Int(ceil(Double(total) / Double(cols))), maxRows)
             return (cols, rows)
         }

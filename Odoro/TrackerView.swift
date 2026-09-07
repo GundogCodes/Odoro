@@ -265,18 +265,18 @@ struct Habit: Identifiable, Codable {
     // Calculate current cell index based on elapsed time
     var currentCellIndex: Int {
         let calendar = Calendar.current
-        let now = Date()
+        let now = completedAt ?? Date()
         
         switch cellUnit {
         case .day:
-            return max(0, calendar.dateComponents([.day], from: startDate, to: now).day ?? 0)
+            return max(0, calendar.dateComponents([.day], from: referenceDate, to: now).day ?? 0)
         case .week:
-            let days = calendar.dateComponents([.day], from: startDate, to: now).day ?? 0
+            let days = calendar.dateComponents([.day], from: referenceDate, to: now).day ?? 0
             return max(0, days / 7)
         case .month:
-            return max(0, calendar.dateComponents([.month], from: startDate, to: now).month ?? 0)
+            return max(0, calendar.dateComponents([.month], from: referenceDate, to: now).month ?? 0)
         case .year:
-            return max(0, calendar.dateComponents([.year], from: startDate, to: now).year ?? 0)
+            return max(0, calendar.dateComponents([.year], from: referenceDate, to: now).year ?? 0)
         }
     }
     
@@ -314,32 +314,89 @@ struct Habit: Identifiable, Codable {
     }
     
     // Calculate which "page" of the grid we're on and cells for that page
-    var gridPageInfo: (currentPage: Int, totalPages: Int, cellsInCurrentPage: Int, filledInCurrentPage: Int) {
-        let totalDuration = totalDurationCells
-        let capacity = maxCellCapacity
-        let elapsed = elapsedCells
-        
-        if totalDuration <= capacity {
-            // Fits in one grid
-            return (0, 1, totalDuration, min(elapsed, totalDuration))
-        }
-        
-        // Multiple pages needed
-        let totalPages = Int(ceil(Double(totalDuration) / Double(capacity)))
-        let currentPage = min(elapsed / capacity, totalPages - 1)
-        
-        // Cells in current page
-        let cellsBeforeThisPage = currentPage * capacity
-        let remainingCells = totalDuration - cellsBeforeThisPage
-        let cellsInCurrentPage = min(remainingCells, capacity)
-        
-        // Filled cells in current page
-        let elapsedInCurrentPage = elapsed - cellsBeforeThisPage
-        let filledInCurrentPage = max(0, min(elapsedInCurrentPage, cellsInCurrentPage))
-        
-        return (currentPage, totalPages, cellsInCurrentPage, filledInCurrentPage)
+    // Keep these calculations identical in the app and widget models.
+    var gridProgressCells: Int {
+        let progress = max(0, elapsedCells)
+        return durationType == .indefinite ? progress : min(progress, totalDurationCells)
     }
-    
+
+    var gridProgressLabel: String {
+        let unit: String
+        switch cellUnit {
+        case .day: unit = "d"
+        case .week: unit = "w"
+        case .month: unit = "mo"
+        case .year: unit = "y"
+        }
+        let progress = gridProgressCells
+        if durationType == .indefinite {
+            return "\(progress)\(unit) completed"
+        }
+        if type == .countdown {
+            return "\(totalDurationCells - progress)\(unit) left · \(progress)\(unit) completed"
+        }
+        return "\(progress)/\(totalDurationCells)\(unit) completed"
+    }
+
+    var compactGridProgressLabel: String {
+        gridProgressLabel.replacingOccurrences(of: " completed", with: "")
+    }
+
+    // Manual cells belong to calendar positions, so missed days remain visible.
+    // Auto cells advance continuously; indefinite pages never have a final page.
+    var gridPageInfo: (currentPage: Int, totalPages: Int, cellsInCurrentPage: Int, filledInCurrentPage: Int) {
+        let capacity = maxCellCapacity
+        let position = updateMode == .manual ? currentCellIndex : gridProgressCells
+        if durationType == .indefinite {
+            let page = position / capacity
+            let offset = page * capacity
+            let filled = updateMode == .manual
+                ? manuallyFilledCells.filter { $0 >= offset && $0 < offset + capacity }.count
+                : position % capacity
+            return (page, page + 1, capacity, filled)
+        }
+
+        let total = totalDurationCells
+        let pages = (total + capacity - 1) / capacity
+        let page = min(position / capacity, pages - 1)
+        let offset = page * capacity
+        let count = min(capacity, total - offset)
+        let filled = updateMode == .manual
+            ? manuallyFilledCells.filter { $0 >= offset && $0 < offset + count }.count
+            : max(0, min(gridProgressCells - offset, count))
+        return (page, pages, count, filled)
+    }
+
+    // Finite details include the entire goal. Indefinite details grow in rows,
+    // with two rows of future cells beyond the current progression.
+    var fullGridCellCount: Int {
+        guard durationType == .indefinite else { return totalDurationCells }
+        let extent = updateMode == .manual
+            ? max(currentCellIndex + 1, (manuallyFilledCells.max() ?? -1) + 1)
+            : gridProgressCells
+        return max(45, ((extent + 14) / 15) * 15 + 30)
+    }
+
+    func gridCellIsFilled(at index: Int, fullGrid: Bool = false) -> Bool {
+        var progressIndex = index
+        if type == .countdown {
+            // Reverse visual order only; saved progress keeps its original indices.
+            if fullGrid {
+                progressIndex = fullGridCellCount - 1 - index
+            } else {
+                let pageStart = (index / maxCellCapacity) * maxCellCapacity
+                let pageCount = durationType == .indefinite
+                    ? maxCellCapacity
+                    : min(maxCellCapacity, totalDurationCells - pageStart)
+                progressIndex = pageStart + pageCount - 1 - (index - pageStart)
+            }
+        }
+        let completed = updateMode == .manual
+            ? manuallyFilledCells.contains(progressIndex)
+            : progressIndex < gridProgressCells
+        return type == .countdown ? !completed : completed
+    }
+
     // Goal cell index within current page (nil for indefinite duration)
     var goalCellIndexInCurrentPage: Int? {
         // No goal cell for indefinite duration
@@ -367,7 +424,7 @@ struct Habit: Identifiable, Codable {
         }
         
         let calendar = Calendar.current
-        let now = Date()
+        let now = completedAt ?? Date()
         let referenceDate = lastResetDate ?? startDate
         
         switch cellUnit {
@@ -417,7 +474,7 @@ struct Habit: Identifiable, Codable {
             let idealRows = max(1, Int(ceil(sqrt(Double(total) / 2.0))))
             let idealCols = Int(ceil(Double(total) / Double(idealRows)))
             
-            let cols = min(idealCols, maxCols)
+            let cols = min(max(idealCols, (total + maxRows - 1) / maxRows), maxCols)
             let rows = min(Int(ceil(Double(total) / Double(cols))), maxRows)
             return (cols, rows)
             
@@ -430,7 +487,7 @@ struct Habit: Identifiable, Codable {
             let idealRows = max(1, Int(ceil(sqrt(Double(total) / 1.5))))
             let idealCols = Int(ceil(Double(total) / Double(idealRows)))
             
-            let cols = min(idealCols, maxCols)
+            let cols = min(max(idealCols, (total + maxRows - 1) / maxRows), maxCols)
             let rows = min(Int(ceil(Double(total) / Double(cols))), maxRows)
             return (cols, rows)
         }
@@ -736,34 +793,18 @@ class HabitManager: ObservableObject {
     
     func incrementProgress(for habit: Habit) {
         if var h = habits.first(where: { $0.id == habit.id }) {
-            // Get the current cell index based on elapsed time
+            guard !h.isCompleted else { return }
             let cellIndex = h.currentCellIndex
-            let gridCapacity = h.gridDimensions.columns * h.gridDimensions.rows
-            
-            // For indefinite habits, wrap the index within current cycle
-            let effectiveIndex = h.durationType == .indefinite ? cellIndex % gridCapacity : cellIndex
-            
-            // Toggle the cell - if already filled, unfill it; otherwise fill it
-            if h.manuallyFilledCells.contains(effectiveIndex) {
-                h.manuallyFilledCells.remove(effectiveIndex)
+            guard h.durationType == .indefinite || cellIndex < h.totalDurationCells else { return }
+
+            // Preserve absolute cell positions across pages and size changes.
+            if h.manuallyFilledCells.contains(cellIndex) {
+                h.manuallyFilledCells.remove(cellIndex)
             } else {
-                h.manuallyFilledCells.insert(effectiveIndex)
+                h.manuallyFilledCells.insert(cellIndex)
             }
-            
-            // Update currentValue to match the count (for compatibility)
             h.currentValue = h.manuallyFilledCells.count
-            
-            // Handle cycling for indefinite habits
-            if h.durationType == .indefinite && effectiveIndex >= gridCapacity - 1 {
-                // Check if we should cycle (all cells in range filled or time moved on)
-                let maxFilledIndex = h.manuallyFilledCells.max() ?? 0
-                if maxFilledIndex >= gridCapacity - 1 {
-                    h.manuallyFilledCells.removeAll()
-                    h.cycleCount += 1
-                    h.currentValue = 0
-                }
-            }
-            
+
             updateHabit(h)
         }
     }
@@ -1014,8 +1055,7 @@ struct ContributionGridView: View {
         self.showFullGrid = showFullGrid
     }
     
-    private var isSmall: Bool { habit.widgetSize == .half }
-    private var isLarge: Bool { habit.widgetSize == .full }
+    private var isSmall: Bool { !showFullGrid && habit.widgetSize == .half }
     
     // Fixed card heights - Small/Medium same, Large is 2x
     private var cardHeight: CGFloat {
@@ -1031,42 +1071,65 @@ struct ContributionGridView: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        TimelineView(.periodic(from: .now, by: 60)) { _ in
+            gridBody
+        }
+    }
+
+    private var gridBody: some View {
+        VStack(alignment: .leading, spacing: 4) {
             // Header
             HStack(spacing: 6) {
                 Image(systemName: habit.icon)
-                    .font(isSmall ? .caption : .subheadline)
+                    .font(.caption2)
                     .foregroundColor(habit.color.color)
                 Text(habit.name)
-                    .font(isSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                    .font(.caption2.weight(.medium))
                     .foregroundColor(.white)
                     .lineLimit(1)
-                Spacer()
-                
-                // Progress label
-                Text(progressLabel)
-                    .font(isSmall ? .caption2 : .caption)
-                    .foregroundColor(.white.opacity(0.7))
+                Spacer(minLength: 4)
+                if !isSmall {
+                    Text(habit.compactGridProgressLabel)
+                        .font(.caption2)
+                        .foregroundColor(.white.opacity(0.6))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .layoutPriority(1)
+                        .accessibilityLabel(habit.gridProgressLabel)
+                }
             }
             
-            // Grid - takes remaining space
-            GridContent(
-                columns: dimensions.columns,
-                rows: dimensions.rows,
-                filledCells: filledCellsForDisplay,
-                totalCells: habit.totalCells,
-                color: habit.color.color,
-                spacing: isSmall ? 3 : 4,
-                isCountdown: habit.type == .countdown,
-                isManualMode: habit.updateMode == .manual,
-                manuallyFilledCells: habit.manuallyFilledCells,
-                currentCellIndex: habit.currentCellIndex,
-                goalCellIndex: habit.goalCellIndexInCurrentPage,
-                pageOffset: habit.gridPageInfo.currentPage * habit.maxCellCapacity
-            )
+            if showFullGrid {
+                FullHabitGridView(habit: habit)
+            } else {
+                GridContent(
+                    columns: dimensions.columns,
+                    rows: dimensions.rows,
+                    filledCells: filledCellsForDisplay,
+                    totalCells: habit.totalCells,
+                    color: habit.color.color,
+                    spacing: isSmall ? 3 : 4,
+                    isCountdown: habit.type == .countdown,
+                    isManualMode: habit.updateMode == .manual,
+                    manuallyFilledCells: habit.manuallyFilledCells,
+                    currentCellIndex: habit.currentCellIndex,
+                    goalCellIndex: habit.goalCellIndexInCurrentPage,
+                    pageOffset: habit.gridPageInfo.currentPage * habit.maxCellCapacity
+                )
+            }
+
+            if isSmall {
+                Text(habit.compactGridProgressLabel)
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.6))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .accessibilityLabel(habit.gridProgressLabel)
+            }
+
         }
-        .padding(12)
-        .frame(height: cardHeight)
+        .padding(8)
+        .frame(height: showFullGrid ? nil : cardHeight)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(.ultraThinMaterial)
@@ -1081,42 +1144,31 @@ struct ContributionGridView: View {
         return habit.filledCellsForDisplay()
     }
     
-    private var progressLabel: String {
-        let pageInfo = habit.gridPageInfo
-        let totalDuration = habit.totalDurationCells
-        
-        let unitSuffix: String
-        switch habit.cellUnit {
-        case .day: unitSuffix = "d"
-        case .week: unitSuffix = "w"
-        case .month: unitSuffix = "mo"
-        case .year: unitSuffix = "y"
-        }
-        
-        if habit.updateMode == .manual {
-            // For manual mode, show filled cells / total cells
-            let filledCount = habit.manuallyFilledCells.count
-            if habit.durationType == .indefinite {
-                let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
-                return "\(filledCount)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
+}
+
+// A lazy grid keeps long histories readable without shrinking cells to fit a card.
+struct FullHabitGridView: View {
+    let habit: Habit
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 15)
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 4) {
+            ForEach(0..<habit.fullGridCellCount, id: \.self) { index in
+                let isGoal = habit.durationType != .indefinite && index == habit.totalDurationCells - 1
+                let filled = habit.gridCellIsFilled(at: index, fullGrid: true)
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(filled ? (isGoal ? Color.yellow : habit.color.color) : Color.white.opacity(0.15))
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
+                        if isGoal {
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(Color.yellow, lineWidth: 1.5)
+                        }
+                    }
             }
-            return "\(filledCount)/\(totalDuration)"
         }
-        
-        // Auto mode - show elapsed time
-        let elapsed = habit.elapsedCells
-        
-        if habit.durationType == .indefinite {
-            let cycleInfo = habit.cycleCount > 0 ? " (×\(habit.cycleCount + 1))" : ""
-            return "\(pageInfo.filledInCurrentPage)/\(pageInfo.cellsInCurrentPage)\(cycleInfo)"
-        }
-        
-        // Show overall progress + page if multiple pages
-        if pageInfo.totalPages > 1 {
-            return "\(elapsed)/\(totalDuration)\(unitSuffix) (\(pageInfo.currentPage + 1)/\(pageInfo.totalPages))"
-        }
-        
-        return "\(elapsed)/\(totalDuration)\(unitSuffix)"
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(habit.gridProgressLabel)
     }
 }
 
@@ -1220,13 +1272,14 @@ struct GridContent: View {
         if isManualMode {
             // Manual mode: check if this specific cell is in the filled set
             // currentCellIndex is global, so make it page-relative for comparison
-            let pageCellIndex = currentCellIndex - pageOffset
-            if manuallyFilledCells.contains(pageOffset + index) {
+            let progressIndex = currentCellIndex - pageOffset
+            let pageCellIndex = isCountdown ? totalCells - 1 - progressIndex : progressIndex
+            if isCellFilled(at: index) {
                 return color
             } else if index == pageCellIndex {
                 // Highlight today's cell with a subtle border/tint if not filled
                 return Color.white.opacity(0.25)
-            } else if index > pageCellIndex {
+            } else if isCountdown ? index < pageCellIndex : index > pageCellIndex {
                 // Future cells are dimmer
                 return Color.white.opacity(0.1)
             } else {
@@ -1244,13 +1297,15 @@ struct GridContent: View {
     }
     
     private func isCellFilled(at index: Int) -> Bool {
+        let index = isCountdown ? totalCells - 1 - index : index
         if isManualMode {
             // Use absolute index (page offset + local index) for manual mode
-            return manuallyFilledCells.contains(pageOffset + index)
+            let completed = manuallyFilledCells.contains(pageOffset + index)
+            return isCountdown ? !completed : completed
         }
 
         if isCountdown {
-            // Countdown: fill from end, empty from start
+            // Indices are reversed above so countdown cells empty from bottom-right.
             let emptyCount = totalCells - filledCells
             return index >= emptyCount && index < totalCells
         } else {
@@ -1267,6 +1322,10 @@ struct TextCounterView: View {
     @State private var currentTime = Date()
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
+    private var isCountingDown: Bool {
+        habit.durationType != .indefinite && habit.type == .countdown
+    }
+
     private var isSmall: Bool { habit.widgetSize == .half }
     private var isLarge: Bool { habit.widgetSize == .full }
     
@@ -1284,7 +1343,7 @@ struct TextCounterView: View {
                 Spacer()
                 
                 // Show countdown/countup label
-                Text(habit.type == .countdown ? "remaining" : "elapsed")
+                Text(habit.durationType == .indefinite ? "Indefinite" : (isCountingDown ? "remaining" : "elapsed"))
                     .font(.caption2)
                     .foregroundColor(.white.opacity(0.5))
             }
@@ -1362,7 +1421,7 @@ struct TextCounterView: View {
     
     // Calculate target date for text counter based on duration and time unit
     private var calculatedTargetDate: Date {
-        if let target = habit.targetDate {
+        if habit.durationType == .toTargetDate, let target = habit.targetDate {
             return target
         }
 
@@ -1390,7 +1449,7 @@ struct TextCounterView: View {
     }
 
     private var timeInterval: TimeInterval {
-        if habit.type == .countdown {
+        if isCountingDown {
             return calculatedTargetDate.timeIntervalSince(currentTime)
         } else {
             return currentTime.timeIntervalSince(habit.referenceDate)
@@ -1405,7 +1464,7 @@ struct TextCounterView: View {
         let elapsed = currentTime.timeIntervalSince(habit.referenceDate)
         let progress = CGFloat(min(max(elapsed / totalInterval, 0), 1))
 
-        if habit.type == .countdown {
+        if isCountingDown {
             return 1.0 - progress
         }
         return progress
@@ -1451,8 +1510,8 @@ struct TextCounterView: View {
         
         // For months/years, use calendar-based calculation for accuracy
         let calendar = Calendar.current
-        let referenceDate = habit.type == .countdown ? currentTime : habit.referenceDate
-        let targetForCalc = habit.type == .countdown ? calculatedTargetDate : currentTime
+        let referenceDate = isCountingDown ? currentTime : habit.referenceDate
+        let targetForCalc = isCountingDown ? calculatedTargetDate : currentTime
         let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: referenceDate, to: targetForCalc)
         
         let years = abs(components.year ?? 0)
@@ -2012,6 +2071,7 @@ struct AddHabitSheet: View {
                                 }
                             }
                             .pickerStyle(.segmented)
+                            .disabled(visualStyle == .text && durationType == .indefinite)
                             
                             // Manual mode only available for grid style
                             if visualStyle == .grid {
@@ -2034,6 +2094,9 @@ struct AddHabitSheet: View {
                     .onChange(of: visualStyle) { _, newStyle in
                         if newStyle != .grid {
                             updateMode = .auto
+                        }
+                        if newStyle == .text && durationType == .indefinite {
+                            habitType = .countUp
                         }
                         // Reset duration type for bar (no indefinite)
                         if newStyle == .bar && durationType == .indefinite {
@@ -2229,14 +2292,14 @@ struct AddHabitSheet: View {
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
                                     
-                                    Picker("Duration", selection: $barDurationType) {
-                                        ForEach(BarDurationType.allCases, id: \.self) { type in
-                                            Text(type.displayName).tag(type)
+                                    Picker("Duration", selection: $durationType) {
+                                        ForEach(GridDurationType.allCases, id: \.self) { type in
+                                            Text(type == .indefinite ? "Indefinite" : type.displayName).tag(type)
                                         }
                                     }
                                     .pickerStyle(.segmented)
-                                    .onChange(of: barDurationType) { _, newValue in
-                                        durationType = newValue.toGridDurationType
+                                    .onChange(of: durationType) { _, newValue in
+                                        if newValue == .indefinite { habitType = .countUp }
                                     }
                                 }
                                 
@@ -2258,7 +2321,7 @@ struct AddHabitSheet: View {
                                 .cornerRadius(10)
                                 
                                 // Duration value
-                                switch barDurationType {
+                                switch durationType {
                                 case .customRange:
                                     HStack {
                                         Text("Duration")
@@ -2283,6 +2346,11 @@ struct AddHabitSheet: View {
                                     .padding(14)
                                     .background(Color(.secondarySystemGroupedBackground))
                                     .cornerRadius(10)
+                                case .indefinite:
+                                    Text("Keeps counting elapsed time with no end date.")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 
                                 // Display format preview
@@ -2374,9 +2442,9 @@ struct AddHabitSheet: View {
             visualStyle: style,
             widgetSize: .full,
             cellUnit: cellUnit,
-            durationType: style == .bar || style == .text ? barDurationType.toGridDurationType : durationType,
+            durationType: style == .bar ? barDurationType.toGridDurationType : durationType,
             customDuration: customDuration,
-            targetDate: (durationType == .toTargetDate || barDurationType == .toTargetDate) ? targetDate : nil,
+            targetDate: (style == .bar ? barDurationType.toGridDurationType : durationType) == .toTargetDate ? targetDate : nil,
             textCounterDuration: textCounterDuration,
             timelineTickUnit: timelineTickUnit,
             timelineDuration: timelineDuration,
@@ -2400,7 +2468,7 @@ struct AddHabitSheet: View {
     }
     
     private func addHabit() {
-        let finalDurationType = (visualStyle == .bar || visualStyle == .text) ? barDurationType.toGridDurationType : durationType
+        let finalDurationType = visualStyle == .bar ? barDurationType.toGridDurationType : durationType
         let habit = Habit(
             name: name,
             icon: icon,
@@ -2411,7 +2479,7 @@ struct AddHabitSheet: View {
             cellUnit: cellUnit,
             durationType: finalDurationType,
             customDuration: customDuration,
-            targetDate: (finalDurationType == .toTargetDate || habitType == .countdown) ? targetDate : nil,
+            targetDate: finalDurationType == .toTargetDate ? targetDate : nil,
             textCounterDuration: textCounterDuration,
             timelineTickUnit: timelineTickUnit,
             timelineDuration: timelineDuration,
@@ -2738,6 +2806,7 @@ struct HabitDetailSheet: View {
                                         }
                                     }
                                     .pickerStyle(.menu)
+                                    .disabled(habit.visualStyle == .text && habit.durationType == .indefinite)
                                 }
                                 .padding(.horizontal)
                                 .padding(.vertical, 12)
@@ -2839,10 +2908,10 @@ struct HabitDetailSheet: View {
                                 SettingsRow(label: "Type", value: habit.type.rawValue)
                                 SettingsRow(label: "Started", value: habit.startDate.formatted(date: .abbreviated, time: .omitted))
                                 SettingsRow(label: "Cell Unit", value: "1 \(habit.cellUnit.displayName)")
-                                SettingsRow(label: "Total Duration", value: "\(habit.totalDurationCells) \(habit.cellUnit.pluralName)")
+                                SettingsRow(label: "Total Duration", value: habit.durationType == .indefinite ? "Indefinite" : "\(habit.totalDurationCells) \(habit.cellUnit.pluralName)")
                                 SettingsRow(label: "Current Grid", value: "\(habit.gridDimensions.columns) × \(habit.gridDimensions.rows)")
                                 if habit.gridPageInfo.totalPages > 1 {
-                                    SettingsRow(label: "Grid Page", value: "\(habit.gridPageInfo.currentPage + 1) of \(habit.gridPageInfo.totalPages)")
+                                    SettingsRow(label: "Grid Page", value: habit.durationType == .indefinite ? "\(habit.gridPageInfo.currentPage + 1)" : "\(habit.gridPageInfo.currentPage + 1) of \(habit.gridPageInfo.totalPages)")
                                 }
                             }
                         }
@@ -2853,7 +2922,7 @@ struct HabitDetailSheet: View {
                                 HStack {
                                     Text("Cells Filled")
                                     Spacer()
-                                    Text("\(habit.manuallyFilledCells.count) / \(habit.totalDurationCells)")
+                                    Text(habit.gridProgressLabel)
                                         .foregroundColor(.secondary)
                                 }
                                 .padding(.horizontal)
@@ -3099,6 +3168,12 @@ struct HabitDetailSheet: View {
                     }
                 }
             }
+            .onChange(of: habit.durationType) { _, newValue in
+                if habit.visualStyle == .text && newValue == .indefinite {
+                    habit.type = .countUp
+                    habit.targetDate = nil
+                }
+            }
             .onChange(of: habit.visualStyle) { oldStyle, newStyle in
                 // Show confirmation when switching visual styles
                 guard !suppressStyleChange else {
@@ -3245,7 +3320,7 @@ struct HabitAnalyticsSection: View {
                         StatCard(title: "Longest Streak", value: "\(longestStreakDays)d", icon: "trophy.fill", color: .yellow)
                     }
                     HStack(spacing: 12) {
-                        StatCard(title: "Progress", value: String(format: "%.1f%%", completionPercentage), icon: "chart.bar.fill", color: .green)
+                        StatCard(title: "Progress", value: habit.durationType == .indefinite ? habit.gridProgressLabel : String(format: "%.1f%%", completionPercentage), icon: "chart.bar.fill", color: .green)
                         if habit.resetHistory.count >= 1 {
                             StatCard(title: "Avg Between Resets", value: averageTimeBetweenResets, icon: "arrow.triangle.2.circlepath", color: .purple)
                         } else {
@@ -3255,22 +3330,6 @@ struct HabitAnalyticsSection: View {
                 }
                 .padding(12)
                 .background(Color(.secondarySystemGroupedBackground))
-
-                // Style-specific graph
-                switch habit.visualStyle {
-                case .grid:
-                    GridAnalyticsGraph(habit: habit)
-                        .padding(12)
-                        .background(Color(.secondarySystemGroupedBackground))
-                case .bar:
-                    TimelineAnalyticsGraph(habit: habit)
-                        .padding(12)
-                        .background(Color(.secondarySystemGroupedBackground))
-                case .text:
-                    TextCounterAnalyticsGraph(habit: habit)
-                        .padding(12)
-                        .background(Color(.secondarySystemGroupedBackground))
-                }
 
                 // Reset history (if any)
                 if !habit.resetHistory.isEmpty {
@@ -3338,341 +3397,6 @@ struct StatCard: View {
     }
 }
 
-// MARK: - Grid Analytics: Weekly fill-rate bar chart
-struct GridAnalyticsGraph: View {
-    let habit: Habit
-
-    private var weeklyData: [(week: String, filled: Int, total: Int)] {
-        let calendar = Calendar.current
-        let now = Date()
-        let weeksToShow = min(12, max(1, (calendar.dateComponents([.weekOfYear], from: habit.createdAt, to: now).weekOfYear ?? 0) + 1))
-
-        var data: [(String, Int, Int)] = []
-        for weekOffset in (0..<weeksToShow).reversed() {
-            guard let weekStart = calendar.date(byAdding: .weekOfYear, value: -weekOffset, to: now),
-                  let weekStartNormalized = calendar.dateInterval(of: .weekOfYear, for: weekStart)?.start else { continue }
-
-            let label = weekStartNormalized.formatted(.dateTime.month(.abbreviated).day())
-            let daysSinceCreation = max(0, calendar.dateComponents([.day], from: habit.createdAt, to: weekStartNormalized).day ?? 0)
-            let totalDaysInWeek = min(7, max(0, calendar.dateComponents([.day], from: weekStartNormalized, to: min(now, calendar.date(byAdding: .day, value: 7, to: weekStartNormalized) ?? now)).day ?? 0))
-
-            if habit.updateMode == .manual {
-                let filledInWeek = (0..<7).reduce(0) { count, dayOff in
-                    let cellIndex = daysSinceCreation + dayOff
-                    return count + (habit.manuallyFilledCells.contains(cellIndex) ? 1 : 0)
-                }
-                data.append((label, filledInWeek, totalDaysInWeek))
-            } else {
-                // Auto-tracking: days in this week that are elapsed
-                let elapsedDaysTotal = calendar.dateComponents([.day], from: habit.referenceDate, to: now).day ?? 0
-                let weekEndDays = daysSinceCreation + totalDaysInWeek
-                let filledInWeek = max(0, min(totalDaysInWeek, elapsedDaysTotal - daysSinceCreation))
-                data.append((label, max(0, filledInWeek), totalDaysInWeek))
-            }
-        }
-        return data
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Weekly Activity")
-                .font(.subheadline.weight(.semibold))
-
-            GeometryReader { geo in
-                let barWidth = max(8, (geo.size.width - CGFloat(weeklyData.count - 1) * 4) / CGFloat(max(1, weeklyData.count)))
-                let maxVal = max(1, weeklyData.map(\.filled).max() ?? 1)
-
-                HStack(alignment: .bottom, spacing: 4) {
-                    ForEach(Array(weeklyData.enumerated()), id: \.offset) { _, item in
-                        VStack(spacing: 4) {
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(habit.color.gradient)
-                                .frame(width: barWidth, height: max(4, CGFloat(item.filled) / CGFloat(maxVal) * (geo.size.height - 20)))
-                            Text(item.week)
-                                .font(.system(size: 7))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                }
-            }
-            .frame(height: 100)
-        }
-    }
-}
-
-// MARK: - Timeline Analytics: Progress curve line chart
-struct TimelineAnalyticsGraph: View {
-    let habit: Habit
-
-    private var progressPoints: [(day: Int, progress: Double)] {
-        let calendar = Calendar.current
-        let totalDays = max(1, calendar.dateComponents([.day], from: habit.createdAt, to: Date()).day ?? 1)
-        let sampleCount = min(totalDays, 20)
-        let step = max(1, totalDays / sampleCount)
-        let totalDuration = Double(habit.totalDurationCells)
-        guard totalDuration > 0 else { return [] }
-
-        var points: [(Int, Double)] = []
-        for i in stride(from: 0, through: totalDays, by: step) {
-            let progress = min(Double(i) / totalDuration * 100, 100)
-            points.append((i, progress))
-        }
-        // Always include current day
-        if points.last?.0 != totalDays {
-            points.append((totalDays, min(Double(totalDays) / totalDuration * 100, 100)))
-        }
-        return points
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Progress Over Time")
-                .font(.subheadline.weight(.semibold))
-
-            GeometryReader { geo in
-                let maxDay = max(1, progressPoints.last?.day ?? 1)
-                let width = geo.size.width
-                let height = geo.size.height
-
-                // Ideal pace line
-                Path { path in
-                    path.move(to: CGPoint(x: 0, y: height))
-                    path.addLine(to: CGPoint(x: width, y: 0))
-                }
-                .stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-
-                // Actual progress line
-                Path { path in
-                    for (index, point) in progressPoints.enumerated() {
-                        let x = CGFloat(point.day) / CGFloat(maxDay) * width
-                        let y = height - (CGFloat(point.progress) / 100 * height)
-                        if index == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                        else { path.addLine(to: CGPoint(x: x, y: y)) }
-                    }
-                }
-                .stroke(habit.color.gradient, lineWidth: 2)
-
-                // Reset markers
-                ForEach(habit.resetHistory) { event in
-                    let dayOfReset = Calendar.current.dateComponents([.day], from: habit.createdAt, to: event.date).day ?? 0
-                    let x = CGFloat(dayOfReset) / CGFloat(maxDay) * width
-                    Circle()
-                        .fill(.orange)
-                        .frame(width: 6, height: 6)
-                        .position(x: x, y: height - 3)
-                }
-
-                // Labels
-                HStack {
-                    Text("Day 0")
-                        .font(.system(size: 8))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("Day \(maxDay)")
-                        .font(.system(size: 8))
-                        .foregroundColor(.secondary)
-                }
-                .offset(y: height + 2)
-
-                // Legend
-                HStack(spacing: 12) {
-                    HStack(spacing: 4) {
-                        RoundedRectangle(cornerRadius: 1).fill(habit.color.color).frame(width: 12, height: 2)
-                        Text("Actual").font(.system(size: 8)).foregroundColor(.secondary)
-                    }
-                    HStack(spacing: 4) {
-                        RoundedRectangle(cornerRadius: 1).stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [3, 3])).frame(width: 12, height: 2)
-                        Text("Ideal").font(.system(size: 8)).foregroundColor(.secondary)
-                    }
-                    if !habit.resetHistory.isEmpty {
-                        HStack(spacing: 4) {
-                            Circle().fill(.orange).frame(width: 4, height: 4)
-                            Text("Resets").font(.system(size: 8)).foregroundColor(.secondary)
-                        }
-                    }
-                }
-                .offset(y: height + 14)
-            }
-            .frame(height: 120)
-            .padding(.bottom, 30)
-        }
-    }
-}
-
-// MARK: - Text Counter Analytics: Milestone markers
-struct TextCounterAnalyticsGraph: View {
-    let habit: Habit
-
-    private var milestones: [(label: String, percent: Double, reached: Bool)] {
-        let total: Double
-        let elapsed: Double
-
-        if habit.durationType == .indefinite {
-            return []
-        }
-
-        let targetDate: Date = {
-            if let t = habit.targetDate { return t }
-            let calendar = Calendar.current
-            let dur = habit.textCounterDuration
-            switch habit.timeUnit {
-            case .seconds: return calendar.date(byAdding: .second, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .minutes: return calendar.date(byAdding: .minute, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .hours: return calendar.date(byAdding: .hour, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .days: return calendar.date(byAdding: .day, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .weeks: return calendar.date(byAdding: .weekOfYear, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .months: return calendar.date(byAdding: .month, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            case .years: return calendar.date(byAdding: .year, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-            }
-        }()
-
-        total = targetDate.timeIntervalSince(habit.referenceDate)
-        elapsed = Date().timeIntervalSince(habit.referenceDate)
-        guard total > 0 else { return [] }
-
-        let currentPercent = min(elapsed / total * 100, 100)
-        let marks: [Int] = [10, 25, 50, 75, 90, 100]
-        return marks.map { pct in
-            ("\(pct)%", Double(pct), currentPercent >= Double(pct))
-        }
-    }
-
-    private var currentPercent: Double {
-        guard let totalInterval = {
-            let targetDate: Date = {
-                if let t = habit.targetDate { return t }
-                let calendar = Calendar.current
-                let dur = habit.textCounterDuration
-                switch habit.timeUnit {
-                case .seconds: return calendar.date(byAdding: .second, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .minutes: return calendar.date(byAdding: .minute, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .hours: return calendar.date(byAdding: .hour, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .days: return calendar.date(byAdding: .day, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .weeks: return calendar.date(byAdding: .weekOfYear, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .months: return calendar.date(byAdding: .month, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                case .years: return calendar.date(byAdding: .year, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                }
-            }()
-            let total = targetDate.timeIntervalSince(habit.referenceDate)
-            return total > 0 ? total : nil
-        }() else { return 0 }
-        let elapsed = Date().timeIntervalSince(habit.referenceDate)
-        return min(elapsed / totalInterval * 100, 100)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Milestones")
-                .font(.subheadline.weight(.semibold))
-
-            if milestones.isEmpty {
-                Text("No milestones for indefinite habits")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 8)
-            } else {
-                // Flag milestone design
-                GeometryReader { geo in
-                    let width = geo.size.width
-                    let barY: CGFloat = 70
-                    let flagPoleHeight: CGFloat = 40
-                    let currentPct = currentPercent
-
-                    // Background track
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(.systemGray5))
-                        .frame(height: 6)
-                        .position(x: width / 2, y: barY)
-
-                    // Fill track
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(habit.color.gradient)
-                        .frame(width: width * CGFloat(currentPct / 100), height: 6)
-                        .position(x: width * CGFloat(currentPct / 100) / 2, y: barY)
-
-                    // Flag markers
-                    ForEach(Array(milestones.enumerated()), id: \.offset) { _, milestone in
-                        let x = CGFloat(milestone.percent / 100) * width
-                        let clampedX = min(max(x, 10), width - 10)
-
-                        // Flag pole
-                        Rectangle()
-                            .fill(milestone.reached ? habit.color.color : Color(.systemGray4))
-                            .frame(width: 1.5, height: flagPoleHeight)
-                            .position(x: clampedX, y: barY - flagPoleHeight / 2)
-
-                        // Flag pennant
-                        FlagShape()
-                            .fill(milestone.reached ? habit.color.gradient : LinearGradient(colors: [Color(.systemGray4)], startPoint: .leading, endPoint: .trailing))
-                            .frame(width: 16, height: 12)
-                            .shadow(color: milestone.reached ? habit.color.color.opacity(0.4) : .clear, radius: 3, x: 0, y: 1)
-                            .position(x: clampedX + 8.5, y: barY - flagPoleHeight - 1)
-
-                        // Small dot on the bar
-                        Circle()
-                            .fill(milestone.reached ? habit.color.color : Color(.systemGray4))
-                            .frame(width: 8, height: 8)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color(.systemBackground), lineWidth: 1.5)
-                            )
-                            .position(x: clampedX, y: barY)
-
-                        // Label below
-                        Text(milestone.label)
-                            .font(.system(size: 9, weight: milestone.reached ? .semibold : .regular))
-                            .foregroundColor(milestone.reached ? .primary : .secondary)
-                            .position(x: clampedX, y: barY + 14)
-                    }
-                }
-                .frame(height: 100)
-
-                // Time-based stats for text counter
-                HStack(spacing: 16) {
-                    if habit.type == .countdown {
-                        let targetDate: Date = {
-                            if let t = habit.targetDate { return t }
-                            let calendar = Calendar.current
-                            let dur = habit.textCounterDuration
-                            switch habit.timeUnit {
-                            case .seconds: return calendar.date(byAdding: .second, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .minutes: return calendar.date(byAdding: .minute, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .hours: return calendar.date(byAdding: .hour, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .days: return calendar.date(byAdding: .day, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .weeks: return calendar.date(byAdding: .weekOfYear, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .months: return calendar.date(byAdding: .month, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            case .years: return calendar.date(byAdding: .year, value: dur, to: habit.referenceDate) ?? habit.referenceDate
-                            }
-                        }()
-                        let remaining = targetDate.timeIntervalSince(Date())
-                        let days = max(0, Int(remaining / 86400))
-                        Text("\(days) days remaining")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Flag Pennant Shape
-struct FlagShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.15))
-        path.addLine(to: CGPoint(x: rect.maxX * 0.7, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - rect.height * 0.15))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
-}
-
 // Helper views for settings
 struct SettingsSection<Content: View>: View {
     let title: String
@@ -3718,6 +3442,7 @@ struct MinimalHabitView: View {
     let habit: Habit
 
     private var progressFraction: CGFloat {
+        guard habit.durationType != .indefinite else { return 1 }
         let total = max(1, habit.totalDurationCells)
         let filled: Int
         if habit.updateMode == .manual {
@@ -3755,10 +3480,11 @@ struct MinimalHabitView: View {
                     .frame(width: 50 * progressFraction, height: 6)
             }
 
-            Text("\(Int(progressFraction * 100))%")
+            Text(habit.durationType == .indefinite ? "Indefinite" : "\(Int(progressFraction * 100))%")
                 .font(.caption2.weight(.medium))
                 .foregroundColor(.white.opacity(0.6))
-                .frame(width: 32, alignment: .trailing)
+                .frame(minWidth: 32, alignment: .trailing)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
