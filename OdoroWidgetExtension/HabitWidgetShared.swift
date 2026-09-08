@@ -13,6 +13,7 @@ import SwiftUI
 struct AppGroupConfig {
     static let suiteName = "group.com.gunisharma.odoro"
     static let habitsKey = "sharedHabits"
+    static let habitsFileName = "sharedHabits.json"
 }
 
 // MARK: - Enums (MUST match main app exactly - same raw values)
@@ -484,21 +485,28 @@ class HabitDataStore {
     }
     
     func loadHabits() -> [Habit] {
-        guard let userDefaults = userDefaults else {
-            print("❌ Widget: Cannot access App Group")
-            return []
+        if let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: AppGroupConfig.suiteName
+        ) {
+            let fileURL = containerURL.appendingPathComponent(AppGroupConfig.habitsFileName)
+            if let data = try? Data(contentsOf: fileURL),
+               let habits = decodeHabits(from: data, source: "shared file") {
+                return habits
+            }
         }
-        
-        guard let data = userDefaults.data(forKey: AppGroupConfig.habitsKey) else {
+
+        guard let data = userDefaults?.data(forKey: AppGroupConfig.habitsKey) else {
             print("❌ Widget: No data found for key '\(AppGroupConfig.habitsKey)'")
             return []
         }
-        
-        print("📦 Widget: Found \(data.count) bytes of data")
-        
+
+        return decodeHabits(from: data, source: "shared preferences") ?? []
+    }
+
+    private func decodeHabits(from data: Data, source: String) -> [Habit]? {
         do {
             let habits = try JSONDecoder().decode([Habit].self, from: data)
-            print("✅ Widget: Decoded \(habits.count) habits")
+            print("✅ Widget: Decoded \(habits.count) habits from \(source)")
             return habits
         } catch let DecodingError.keyNotFound(key, context) {
             print("❌ Widget: Missing key '\(key.stringValue)' - \(context.debugDescription)")
@@ -510,8 +518,8 @@ class HabitDataStore {
         } catch {
             print("❌ Widget: Decoding error - \(error)")
         }
-        
-        return []
+
+        return nil
     }
     
     var activeHabits: [Habit] {
