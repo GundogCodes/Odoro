@@ -66,12 +66,13 @@ struct CyclingHabitWidget: Widget {
         ) { entry in
             HabitWidgetView(entry: entry)
                 .containerBackground(for: .widget) {
-                    WidgetBackground()
+                    WidgetBackground(tint: entry.habit?.color.color ?? .purple)
                 }
         }
         .configurationDisplayName("Cycling Habit Tracker")
         .description("Rotate through all your active habits at your chosen interval.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()
+        .containerBackgroundRemovable(true)
     }
 }

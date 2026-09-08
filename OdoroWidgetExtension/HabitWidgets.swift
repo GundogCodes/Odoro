@@ -145,6 +145,7 @@ struct WidgetGridView: View {
                 Image(systemName: habit.icon)
                     .font(.caption2)
                     .foregroundColor(habit.color.color)
+                    .widgetAccentable()
                 Text(habit.name)
                     .font(.caption2.weight(.medium))
                     .foregroundColor(textColor)
@@ -190,6 +191,7 @@ struct WidgetGridView: View {
                                     } else {
                                         RoundedRectangle(cornerRadius: cornerRadius)
                                             .fill(cellColor(at: cellIndex))
+                                            .widgetAccentable(isCellFilled(at: cellIndex))
                                             .frame(width: cellWidth, height: cellHeight)
                                     }
                                 }
@@ -218,6 +220,7 @@ struct WidgetGridView: View {
             // Solid gold with subtle shimmer gradient
             RoundedRectangle(cornerRadius: cornerRadius)
                 .fill(goldGradient)
+                .widgetAccentable()
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .stroke(Color.white.opacity(0.5), lineWidth: 1)
@@ -368,6 +371,7 @@ struct WidgetTextCounterView: View {
                 Image(systemName: habit.icon)
                     .font(isSmall ? .caption : .subheadline)
                     .foregroundColor(habit.color.color)
+                    .widgetAccentable()
                 Text(habit.name)
                     .font(isSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
                     .foregroundColor(textColor)
@@ -386,6 +390,7 @@ struct WidgetTextCounterView: View {
                     Text(primaryValue)
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .foregroundStyle(habit.color.gradient)
+                        .widgetAccentable()
                         .minimumScaleFactor(0.5)
                         .lineLimit(1)
                     Text(primaryLabel)
@@ -401,6 +406,7 @@ struct WidgetTextCounterView: View {
                             Text(component.value)
                                 .font(.system(size: isLarge ? 32 : 26, weight: .bold, design: .rounded))
                                 .foregroundStyle(habit.color.gradient)
+                                .widgetAccentable()
                             Text(component.label)
                                 .font(.caption2)
                                 .foregroundColor(textColor.opacity(0.6))
@@ -420,6 +426,7 @@ struct WidgetTextCounterView: View {
                             .fill(colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.1))
                         RoundedRectangle(cornerRadius: 4)
                             .fill(habit.color.gradient)
+                            .widgetAccentable()
                             .frame(width: geo.size.width * progressToTarget)
                     }
                 }
@@ -556,6 +563,7 @@ struct WidgetTimelineBarView: View {
                 Image(systemName: habit.icon)
                     .font(isSmall ? .caption : .subheadline)
                     .foregroundColor(habit.color.color)
+                    .widgetAccentable()
                 Text(habit.name)
                     .font(isSmall ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
                     .foregroundColor(textColor)
@@ -570,6 +578,7 @@ struct WidgetTimelineBarView: View {
             Text(mainTimeDisplay)
                 .font(.system(size: isSmall ? 20 : (isLarge ? 28 : 24), weight: .bold, design: .rounded))
                 .foregroundStyle(habit.color.gradient)
+                .widgetAccentable()
                 .frame(maxWidth: .infinity, alignment: isSmall ? .center : .leading)
             
             // Progress info (not on small)
@@ -604,6 +613,7 @@ struct WidgetTimelineBarView: View {
                     // Progress fill
                     RoundedRectangle(cornerRadius: 2)
                         .fill(habit.color.gradient)
+                        .widgetAccentable()
                         .frame(width: geo.size.width * progress, height: barHeight)
                         .offset(y: (tickHeight - barHeight) / 2)
                     
@@ -614,6 +624,7 @@ struct WidgetTimelineBarView: View {
                         
                         Rectangle()
                             .fill(isFilled ? habit.color.color : (colorScheme == .dark ? Color.white.opacity(0.3) : Color.black.opacity(0.2)))
+                            .widgetAccentable(isFilled)
                             .frame(width: isLarge ? 2 : 1.5, height: tickHeight)
                             .position(x: xPosition, y: tickHeight / 2)
                     }
@@ -659,21 +670,36 @@ struct HabitWidget: Widget {
         ) { entry in
             HabitWidgetView(entry: entry)
                 .containerBackground(for: .widget) {
-                    WidgetBackground()
+                    WidgetBackground(tint: entry.habit?.color.color ?? .purple)
                 }
         }
         .configurationDisplayName("Habit Tracker")
         .description("Track your habit progress.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()
+        .containerBackgroundRemovable(true)
     }
 }
 
 // MARK: - Widget Background
 struct WidgetBackground: View {
     @Environment(\.colorScheme) var colorScheme
-    
+    let tint: Color
+
     var body: some View {
-        colorScheme == .dark ? Color.black : Color.white
+        // WidgetKit owns wallpaper refraction in Clear/Tinted mode and removes this
+        // background. Full-color mode gets a softly lit surface with the same palette.
+        ContainerRelativeShape()
+            .fill(colorScheme == .dark ? Color(white: 0.09) : Color(white: 0.96))
+            .overlay {
+                ContainerRelativeShape().fill(
+                    LinearGradient(colors: [tint.opacity(0.22), tint.opacity(0.04), tint.opacity(0.14)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing))
+            }
+            .overlay {
+                ContainerRelativeShape().strokeBorder(
+                    LinearGradient(colors: [.white.opacity(0.65), .white.opacity(0.05), tint.opacity(0.25), .white.opacity(0.35)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.5)
+            }
     }
 }

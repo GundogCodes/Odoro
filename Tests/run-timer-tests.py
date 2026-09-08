@@ -16,6 +16,9 @@ for widget in [False, True]:
     start = 'struct WidgetTextCounterView' if widget else 'struct TextCounterView'
     end = 'struct WidgetTimelineBarView' if widget else '// MARK: - Timeline Bar View'
     view = source[source.index(start):source.index(end)].replace('private ', '')
+    if not widget:
+        view = ((root / 'Odoro/BackgroundTheme.swift').read_text() + '\n'
+                + (root / 'Odoro/HabitCardBackground.swift').read_text() + '\n' + view)
     constructor = 'WidgetTextCounterView(habit: habit, family: .systemSmall)' if widget else 'TextCounterView(habit: habit)'
     test = '''
 import WidgetKit

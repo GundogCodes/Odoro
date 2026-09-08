@@ -462,22 +462,26 @@ class FocusSoundManager: ObservableObject {
 
 // MARK: - App Settings
 class AppSettings: ObservableObject {
-    static let defaultStudyColor: Color = .purple
-    static let defaultRestColor: Color = .red
-    static let defaultStudyBackgroundColor: Color = Color.green.opacity(0.3)
-    static let defaultRestBackgroundColor: Color = Color.orange.opacity(0.7)
+    static let defaultStudyColor = BackgroundTheme.violet.trackerPalette(for: .light).middle
+    static let defaultRestColor = BackgroundTheme.violet.pickerPalette(for: .light).middle
+    static let defaultStudyBackgroundColor = BackgroundTheme.violet.trackerPalette(for: .light).background
+    static let defaultRestBackgroundColor = BackgroundTheme.violet.pickerPalette(for: .light).background
+    private var applyingTheme = false
+    private var customColorKeys = Set<String>()
+    private var activeTheme = BackgroundTheme.violet
+    private var activeScheme = ColorScheme.light
     
     @Published var studyColor: Color {
-        didSet { saveColor(studyColor, key: "studyColor") }
+        didSet { if !applyingTheme { customColorKeys.insert("studyColor"); saveColor(studyColor, key: "studyColor") } }
     }
     @Published var restColor: Color {
-        didSet { saveColor(restColor, key: "restColor") }
+        didSet { if !applyingTheme { customColorKeys.insert("restColor"); saveColor(restColor, key: "restColor") } }
     }
     @Published var studyBackgroundColor: Color {
-        didSet { saveColor(studyBackgroundColor, key: "studyBackgroundColor") }
+        didSet { if !applyingTheme { customColorKeys.insert("studyBackgroundColor"); saveColor(studyBackgroundColor, key: "studyBackgroundColor") } }
     }
     @Published var restBackgroundColor: Color {
-        didSet { saveColor(restBackgroundColor, key: "restBackgroundColor") }
+        didSet { if !applyingTheme { customColorKeys.insert("restBackgroundColor"); saveColor(restBackgroundColor, key: "restBackgroundColor") } }
     }
     @Published var isMuted: Bool {
         didSet { UserDefaults.standard.set(isMuted, forKey: "isMuted") }
@@ -516,16 +520,52 @@ class AppSettings: ObservableObject {
         } else {
             self.timerNotificationsEnabled = UserDefaults.standard.bool(forKey: "timerNotificationsEnabled")
         }
+        let legacyDefaults: [String: Color] = [
+            "studyColor": .purple, "restColor": .red,
+            "studyBackgroundColor": .green.opacity(0.3), "restBackgroundColor": .orange.opacity(0.7)
+        ]
+        for (key, legacy) in legacyDefaults {
+            if let saved = Self.loadColor(key: key), UserDefaults.standard.bool(forKey: key + "Custom") || !Self.sameColor(saved, legacy) {
+                customColorKeys.insert(key)
+            }
+        }
+        let theme = BackgroundTheme(rawValue: UserDefaults.standard.string(forKey: BackgroundTheme.storageKey) ?? "") ?? .violet
+        applyTheme(theme, scheme: UITraitCollection.current.userInterfaceStyle == .dark ? .dark : .light)
+
     }
     
+    func applyTheme(_ theme: BackgroundTheme, scheme: ColorScheme) {
+        activeTheme = theme
+        activeScheme = scheme
+        let tracker = theme.trackerPalette(for: scheme)
+        let picker = theme.pickerPalette(for: scheme)
+        applyingTheme = true
+        defer { applyingTheme = false }
+        if !customColorKeys.contains("studyColor") { studyColor = tracker.middle }
+        if !customColorKeys.contains("studyBackgroundColor") { studyBackgroundColor = tracker.background }
+        if !customColorKeys.contains("restColor") { restColor = picker.middle }
+        if !customColorKeys.contains("restBackgroundColor") { restBackgroundColor = picker.background }
+    }
+
     func resetToDefaults() {
-        studyColor = Self.defaultStudyColor
-        restColor = Self.defaultRestColor
-        studyBackgroundColor = Self.defaultStudyBackgroundColor
-        restBackgroundColor = Self.defaultRestBackgroundColor
+        customColorKeys.removeAll()
+        for key in ["studyColor", "studyBackgroundColor", "restColor", "restBackgroundColor"] {
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: key + "Custom")
+        }
+        applyTheme(activeTheme, scheme: activeScheme)
     }
-    
+
+    private static func sameColor(_ first: Color, _ second: Color) -> Bool {
+        var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+        var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+        guard UIColor(first).getRed(&r1, green: &g1, blue: &b1, alpha: &a1),
+              UIColor(second).getRed(&r2, green: &g2, blue: &b2, alpha: &a2) else { return false }
+        return abs(r1 - r2) < 0.005 && abs(g1 - g2) < 0.005 && abs(b1 - b2) < 0.005 && abs(a1 - a2) < 0.005
+    }
+
     private func saveColor(_ color: Color, key: String) {
+        UserDefaults.standard.set(true, forKey: key + "Custom")
         let uiColor = UIColor(color)
         if let data = try? NSKeyedArchiver.archivedData(withRootObject: uiColor, requiringSecureCoding: false) {
             UserDefaults.standard.set(data, forKey: key)
@@ -1261,22 +1301,21 @@ struct ViewfinderCorner: View {
 struct GlassButtonStyle: ButtonStyle {
     var isActive: Bool = false
     var activeColor: Color = .blue
+    var role: FocusSurfaceRole = .timer
+    @Environment(\.colorScheme) private var colorScheme
     
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 14).fill(.ultraThinMaterial)
-                    if isActive {
-                        RoundedRectangle(cornerRadius: 14).fill(activeColor.opacity(0.3))
-                    }
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.2)],
-                                              startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
-                }
-            )
+            .foregroundStyle(FocusSurfaceStyle.textColor(for: colorScheme))
+            .background {
+                FocusSurfaceBackground(
+                    shape: RoundedRectangle(cornerRadius: 14, style: .continuous),
+                    role: role,
+                    accent: isActive ? activeColor : nil
+                )
+            }
             .shadow(color: .black.opacity(0.15), radius: 5, x: 0, y: 3)
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
             .animation(.easeInOut(duration: 0.15), value: configuration.isPressed)
@@ -1342,42 +1381,17 @@ struct SettingsPanel: View {
     
     var generalSettings: some View {
         VStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Fill Colors").font(.headline).foregroundColor(.white)
-                HStack {
-                    Text("Lock In Fill").foregroundColor(.white.opacity(0.8))
-                    Spacer()
-                    ColorPicker("", selection: $settings.studyColor, supportsOpacity: false).labelsHidden()
-                }
-                HStack {
-                    Text("Chill Fill").foregroundColor(.white.opacity(0.8))
-                    Spacer()
-                    ColorPicker("", selection: $settings.restColor, supportsOpacity: false).labelsHidden()
-                }
-            }
-            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Background Colors").font(.headline).foregroundColor(.white)
-                HStack {
-                    Text("Lock In Background").foregroundColor(.white.opacity(0.8))
-                    Spacer()
-                    ColorPicker("", selection: $settings.studyBackgroundColor, supportsOpacity: true).labelsHidden()
-                }
-                HStack {
-                    Text("Chill Background").foregroundColor(.white.opacity(0.8))
-                    Spacer()
-                    ColorPicker("", selection: $settings.restBackgroundColor, supportsOpacity: true).labelsHidden()
-                }
-            }
-            .padding(16).background(RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.1)))
-            
+            TimerPhaseColorsSection(title: "Lock In", icon: "flame.fill",
+                                    fill: $settings.studyColor, background: $settings.studyBackgroundColor)
+            TimerPhaseColorsSection(title: "Chill", icon: "leaf.fill",
+                                    fill: $settings.restColor, background: $settings.restBackgroundColor)
+
             Button {
                 withAnimation { settings.resetToDefaults() }
             } label: {
                 HStack {
                     Image(systemName: "arrow.counterclockwise")
-                    Text("Reset Colors to Default")
+                    Text("Reset Colors to Theme")
                 }
                 .font(.subheadline.bold()).foregroundColor(.white)
                 .frame(maxWidth: .infinity).padding(12)
@@ -1595,6 +1609,11 @@ struct LogoScreen: View {
 // MARK: - Animated Mesh Background
 struct AnimatedMeshBackground: View {
     @Environment(\.colorScheme) var colorScheme
+    @AppStorage(BackgroundTheme.storageKey) private var selectedTheme = BackgroundTheme.violet.rawValue
+
+    private var palette: WavePalette {
+        (BackgroundTheme(rawValue: selectedTheme) ?? .violet).pickerPalette(for: colorScheme)
+    }
     
     @State private var wave1FromTop: Bool = false
     @State private var wave2FromTop: Bool = true
@@ -1610,15 +1629,15 @@ struct AnimatedMeshBackground: View {
             GeometryReader { geo in
                 ZStack {
                     if colorScheme == .dark {
-                        Color(red: 0.0, green: 0.45, blue: 0.4)
-                        HorizontalFluidWave(time: time, fromTop: wave1FromTop, baseHeight: 0.65, amplitude: 50, frequency: 1.0, speed: 0.6 * speedMultiplier1, color: Color(red: 0.0, green: 0.7, blue: 0.5))
-                        HorizontalFluidWave(time: time, fromTop: wave2FromTop, baseHeight: 0.55, amplitude: 45, frequency: 1.2, speed: 0.8 * speedMultiplier2, color: Color(red: 0.1, green: 0.85, blue: 0.65))
-                        HorizontalFluidWave(time: time, fromTop: wave3FromTop, baseHeight: 0.4, amplitude: 40, frequency: 1.4, speed: 1.0 * speedMultiplier3, color: Color(red: 0.2, green: 0.95, blue: 0.6))
+                        palette.background
+                        HorizontalFluidWave(time: time, fromTop: wave1FromTop, baseHeight: 0.65, amplitude: 50, frequency: 1.0, speed: 0.6 * speedMultiplier1, color: palette.back)
+                        HorizontalFluidWave(time: time, fromTop: wave2FromTop, baseHeight: 0.55, amplitude: 45, frequency: 1.2, speed: 0.8 * speedMultiplier2, color: palette.middle)
+                        HorizontalFluidWave(time: time, fromTop: wave3FromTop, baseHeight: 0.4, amplitude: 40, frequency: 1.4, speed: 1.0 * speedMultiplier3, color: palette.front)
                     } else {
-                        Color(red: 1.0, green: 0.75, blue: 0.3)
-                        HorizontalFluidWave(time: time, fromTop: wave1FromTop, baseHeight: 0.7, amplitude: 55, frequency: 0.9, speed: 0.55 * speedMultiplier1, color: Color(red: 1.0, green: 0.55, blue: 0.3))
-                        HorizontalFluidWave(time: time, fromTop: wave2FromTop, baseHeight: 0.6, amplitude: 50, frequency: 1.1, speed: 0.75 * speedMultiplier2, color: Color(red: 1.0, green: 0.45, blue: 0.4))
-                        HorizontalFluidWave(time: time, fromTop: wave3FromTop, baseHeight: 0.35, amplitude: 45, frequency: 1.3, speed: 0.9 * speedMultiplier3, color: Color(red: 1.0, green: 0.35, blue: 0.5))
+                        palette.background
+                        HorizontalFluidWave(time: time, fromTop: wave1FromTop, baseHeight: 0.7, amplitude: 55, frequency: 0.9, speed: 0.55 * speedMultiplier1, color: palette.back)
+                        HorizontalFluidWave(time: time, fromTop: wave2FromTop, baseHeight: 0.6, amplitude: 50, frequency: 1.1, speed: 0.75 * speedMultiplier2, color: palette.middle)
+                        HorizontalFluidWave(time: time, fromTop: wave3FromTop, baseHeight: 0.35, amplitude: 45, frequency: 1.3, speed: 0.9 * speedMultiplier3, color: palette.front)
                     }
                 }
                 .drawingGroup()
@@ -1702,15 +1721,11 @@ struct HorizontalFluidShape: Shape {
 
 // MARK: - Picker Screen
 struct PickerScreen: View {
-    @Binding var studyTime: Int
-    @Binding var restTime: Int
-    @Binding var choicesMade: Bool
-    @Binding var showTimerFlow: Bool
-    @ObservedObject var stats: StatsManager
-    @ObservedObject var settings: AppSettings
+    @ObservedObject var session: PomodoroSession
+    let onBack: () -> Void
+    let onOpenTimer: () -> Void
     @Environment(\.colorScheme) var colorScheme
 
-    @State private var showContent = false
     
     @Environment(\.verticalSizeClass) var verticalSizeClass
     var isLandscape: Bool { verticalSizeClass == .compact }
@@ -1723,17 +1738,41 @@ struct PickerScreen: View {
                 VStack(spacing: 0) {
                     Spacer()
                     
-                    if !choicesMade {
+                    if session.hasSession {
+                        VStack(spacing: 18) {
+                            Label(session.status, systemImage: session.isStudy ? "flame.fill" : "leaf.fill")
+                                .font(.title2.bold())
+                            Text(String(format: "%02d:%02d", session.secondsLeft / 60, session.secondsLeft % 60))
+                                .font(.system(size: 54, weight: .bold, design: .monospaced))
+                                .monospacedDigit()
+                            Button("Return to Timer") {
+                                withAnimation(.easeInOut(duration: 0.35)) { onOpenTimer() }
+                            }
+                            .buttonStyle(GlassButtonStyle())
+                            Button("Reset", role: .destructive) { session.resetTimer() }
+                                .buttonStyle(GlassButtonStyle())
+                        }
+                        .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
+                        .padding(28)
+                        .frame(maxWidth: .infinity)
+                        .background {
+                            FocusSurfaceBackground(
+                                shape: RoundedRectangle(cornerRadius: 24, style: .continuous),
+                                role: .picker
+                            )
+                        }
+                        .padding(.horizontal, 20)
+                    } else {
                         // Titles above pickers
                         HStack(spacing: 12) {
                             Text("Lock In Time")
                                 .font(.title2.weight(.bold))
-                                .foregroundColor(.white)
+                                .modifier(ThemeHeadingStyle())
                                 .frame(maxWidth: .infinity)
                             
                             Text("Chill Time")
                                 .font(.title2.weight(.bold))
-                                .foregroundColor(.white)
+                                .modifier(ThemeHeadingStyle())
                                 .frame(maxWidth: .infinity)
                         }
                         .padding(.horizontal, 16)
@@ -1742,12 +1781,12 @@ struct PickerScreen: View {
                         // Pickers side by side
                         HStack(spacing: 12) {
                             ModernPickerCard(
-                                selection: $studyTime,
+                                selection: $session.studyTime,
                                 height: isLandscape ? geo.size.height * 0.6 : geo.size.height * 0.65
                             )
                             
                             ModernPickerCard(
-                                selection: $restTime,
+                                selection: $session.restTime,
                                 height: isLandscape ? geo.size.height * 0.6 : geo.size.height * 0.65
                             )
                         }
@@ -1755,21 +1794,16 @@ struct PickerScreen: View {
                         
                         // Done button
                         Button {
-                            choicesMade = true
+                            withAnimation(.easeInOut(duration: 0.35)) { onOpenTimer() }
                         } label: {
                             Text("Done")
                                 .font(.body.weight(.semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
                                 .padding(.horizontal, 24)
                                 .padding(.vertical, 10)
-                                .background(
-                                    Capsule()
-                                        .fill(.blue.opacity(0.7))
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(.white, lineWidth: 2)
-                                        )
-                                )
+                                .background {
+                                    FocusSurfaceBackground(shape: Capsule(), role: .picker, accent: .blue)
+                                }
                                 .shadow(radius: 10)
                         }
                         .padding(.top, 24)
@@ -1777,26 +1811,19 @@ struct PickerScreen: View {
                     
                     Spacer()
                 }
-                .opacity(showContent ? 1 : 0)
-                .offset(y: showContent ? 0 : 30)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showContent)
                 
                 // Back button
                 VStack {
                     HStack {
                         Button {
-                            withAnimation(.easeInOut(duration: 0.25)) { showTimerFlow = false }
+                            withAnimation(.easeInOut(duration: 0.35)) { onBack() }
                         } label: {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 18, weight: .semibold))
                                 .frame(width: 24, height: 24)
-                                .foregroundColor(.white)
+                                .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
                                 .padding(12)
-                                .background(
-                                    Circle()
-                                        .fill(.ultraThinMaterial)
-                                        .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
-                                )
+                                .background { FocusSurfaceBackground(shape: Circle(), role: .picker) }
                                 .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                         }
                         .padding(.leading, 20)
@@ -1807,17 +1834,16 @@ struct PickerScreen: View {
                 }
             }
         }
-        .gesture(
+        .simultaneousGesture(
             DragGesture(minimumDistance: 50)
                 .onEnded { value in
                     if value.translation.width > 50 && abs(value.translation.height) < 100 {
-                        withAnimation(.easeInOut(duration: 0.25)) { showTimerFlow = false }
+                        withAnimation(.easeInOut(duration: 0.35)) { onBack() }
+                    } else if value.translation.width < -50 && abs(value.translation.height) < 100 {
+                        withAnimation(.easeInOut(duration: 0.35)) { onOpenTimer() }
                     }
                 }
         )
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showContent = true }
-        }
     }
 }
 
@@ -1862,9 +1888,10 @@ struct ModernPickerCard: View {
             let inset = pixelAlign(max(0, (geo.size.height - itemHeight) / 2))
 
             ZStack {
-                // Background
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(.ultraThinMaterial.opacity(colorScheme == .light ? 0.5 : 1))
+                FocusSurfaceBackground(
+                    shape: RoundedRectangle(cornerRadius: 24, style: .continuous),
+                    role: .picker
+                )
 
                 // Scrollable numbers (no spacer rows)
                 ScrollView(.vertical, showsIndicators: false) {
@@ -1873,7 +1900,11 @@ struct ModernPickerCard: View {
                             Text("\(num)")
                                 .font(.system(size: 34, weight: .bold, design: .rounded))
                                 .monospacedDigit()
-                                .foregroundColor(scrollPosition == num ? .white : .white.opacity(0.4))
+                                .foregroundColor(
+                                    scrollPosition == num
+                                        ? FocusSurfaceStyle.textColor(for: colorScheme)
+                                        : FocusSurfaceStyle.secondaryTextColor(for: colorScheme)
+                                )
                                 .frame(height: itemHeight)
                                 .frame(maxWidth: .infinity)
                                 .contentShape(Rectangle())
@@ -1914,7 +1945,7 @@ struct ModernPickerCard: View {
                 )
 
                 // Selector overlay
-                LiquidGlassSelector(height: itemHeight)
+                PickerSelectionHighlight(height: itemHeight)
                     .allowsHitTesting(false)
             }
         }
@@ -1947,31 +1978,17 @@ struct ModernPickerCard: View {
     }
 }
 
-struct LiquidGlassSelector: View {
+struct PickerSelectionHighlight: View {
     let height: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: height * 0.42, style: .continuous)
-
-        shape
-            .fill(.ultraThinMaterial)
-            .opacity(0.08)
-            .overlay(      // highlight (keep subtle)
-                shape.fill(
-                    LinearGradient(
-                        colors: [
-                            .white.opacity(0.10),
-                            .white.opacity(0.05),
-                            .clear
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .blendMode(.overlay)
-            )
-            .overlay(shape.stroke(.white.opacity(0.22), lineWidth: 1))
-            .shadow(color: .black.opacity(0.20), radius: 14, x: 0, y: 10)
+        RoundedRectangle(cornerRadius: height * 0.42, style: .continuous)
+            .fill(FocusSurfaceStyle.textColor(for: colorScheme).opacity(0.07))
+            .overlay {
+                RoundedRectangle(cornerRadius: height * 0.42, style: .continuous)
+                    .strokeBorder(FocusSurfaceStyle.textColor(for: colorScheme).opacity(0.22), lineWidth: 1)
+            }
             .frame(height: height)
             .padding(.horizontal, 10)
     }
@@ -2027,8 +2044,10 @@ struct BatterySaverWaveView: View {
 
 // MARK: - Quick Adjust Button for Timer
 struct QuickAdjustButton: View {
-    let minutes: Int
+    let seconds: Int
+    var role: FocusSurfaceRole = .timer
     let action: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Button(action: {
@@ -2036,84 +2055,45 @@ struct QuickAdjustButton: View {
             impact.impactOccurred()
             action()
         }) {
-            Text("\(minutes > 0 ? "+" : "")\(minutes)")
+            Text("\(seconds > 0 ? "+" : "")\(seconds)s")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
                 .frame(width: 44, height: 44)
-                .background(
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            Circle()
-                                .stroke(.white.opacity(0.3), lineWidth: 1)
-                        )
-                )
+                .background { FocusSurfaceBackground(shape: Circle(), role: role) }
                 .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
         }
         .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("\(seconds > 0 ? "Add" : "Subtract") \(abs(seconds)) seconds")
     }
 }
 
 // MARK: - Timer Screen
 struct TimerScreen: View {
-    @Binding var studyTime: Int
-    @Binding var restTime: Int
-    @Binding var choicesMade: Bool
+    @ObservedObject var session: PomodoroSession
     @ObservedObject var settings: AppSettings
-    @ObservedObject var stats: StatsManager
     @ObservedObject var soundManager: FocusSoundManager
-    
+    let onBack: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.verticalSizeClass) var verticalSizeClass
     var isLandscape: Bool { verticalSizeClass == .compact }
-    
-    @State private var isStudy = true
-    @State private var secondsLeft: Int
-    @State private var timerRunning = false
-    @State private var sessionComplete = false
-    @State private var consecutiveSessions = 0
-    @State private var isLongBreak = false
-    @State private var studySecondsThisSession = 0
-    
-    @State private var timerStartTime: Date?
-    @State private var timerEndTime: Date?
-    @State private var backgroundTime: Date?
-    @State private var isTransitioningPhase = false
-    @State private var audioPlayer: AVAudioPlayer?
-    
     @StateObject private var cameraManager = CameraManager()
+    @StateObject private var motionManager = MotionManager()
     @State private var showCameraPreview = false
     @State private var timelapseMessage: String?
     @State private var showTimelapseAlert = false
     @State private var showSettings = false
     @State private var showUI = true
     @State private var hideTimer: Timer?
+
+    private var surfaceRole: FocusSurfaceRole {
+        session.isStudy ? .tracker : .picker
+    }
     @State private var cameraPreviewHidden = false
     @State private var batterySaverMode = false
-    
-    @StateObject private var motionManager = MotionManager()
-    @StateObject private var liveActivityManager = LiveActivityManager()
-    
-    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    
-    init(studyTime: Binding<Int>, restTime: Binding<Int>, choicesMade: Binding<Bool>, settings: AppSettings, stats: StatsManager, soundManager: FocusSoundManager) {
-        self._studyTime = studyTime
-        self._restTime = restTime
-        self._choicesMade = choicesMade
-        self._settings = ObservedObject(wrappedValue: settings)
-        self._stats = ObservedObject(wrappedValue: stats)
-        self._soundManager = ObservedObject(wrappedValue: soundManager)
-        self._secondsLeft = State(initialValue: studyTime.wrappedValue * 60)
-    }
-    
-    var totalSeconds: Int {
-        if isStudy { return studyTime * 60 }
-        else if isLongBreak { return settings.longBreakTime * 60 }
-        else { return restTime * 60 }
-    }
-    
+
     var progress: CGFloat {
-        guard totalSeconds > 0 else { return 0 }
-        return min(max(CGFloat(totalSeconds - secondsLeft) / CGFloat(totalSeconds), 0), 1)
+        guard session.totalSeconds > 0 else { return 0 }
+        return min(max(CGFloat(session.totalSeconds - session.secondsLeft) / CGFloat(session.totalSeconds), 0), 1)
     }
     
     var studyGradient: LinearGradient {
@@ -2132,70 +2112,70 @@ struct TimerScreen: View {
                     // Show wave boundary line in battery saver mode
                     BatterySaverWaveView(
                         progress: progress,
-                        waveColor: isStudy
+                        waveColor: session.isStudy
                             ? settings.studyColor.opacity(0.7)
                             : settings.restColor.opacity(0.7)
                     )
                 } else {
-                    (isStudy ? settings.studyBackgroundColor : settings.restBackgroundColor).ignoresSafeArea()
-                    FluidFillView(progress: progress, gradient: isStudy ? studyGradient : restGradient, motionManager: motionManager, isAnimating: timerRunning)
+                    (session.isStudy ? settings.studyBackgroundColor : settings.restBackgroundColor).ignoresSafeArea()
+                    FluidFillView(progress: progress, gradient: session.isStudy ? studyGradient : restGradient, motionManager: motionManager, isAnimating: session.timerRunning)
                 }
                 
                 VStack(spacing: 30) {
                     if !batterySaverMode {
                         VStack(spacing: 8) {
-                            Text(isStudy ? "Lock In Time" : (isLongBreak ? "Long Chill" : "Chill Time"))
+                            Text(session.isStudy ? "Lock In Time" : (session.isLongBreak ? "Long Chill" : "Chill Time"))
                                 .font(.largeTitle).bold().foregroundColor(.white)
                             if settings.longBreakEnabled {
-                                Text("Session \(consecutiveSessions + 1) of \(settings.sessionsUntilLongBreak)")
+                                Text("Session \(session.consecutiveSessions + 1) of \(settings.sessionsUntilLongBreak)")
                                     .font(.subheadline).foregroundColor(.white.opacity(0.7))
                             }
                         }
                     }
                     
-                    Text(timeString(from: secondsLeft))
+                    Text(timeString(from: session.secondsLeft))
                         .font(.system(size: batterySaverMode ? 90 : 70, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
 
                     if showUI && !batterySaverMode {
                         HStack(spacing: 16) {
-                            Button { toggleTimer() } label: {
+                            Button { session.toggleTimer() } label: {
                                 HStack(spacing: 6) {
-                                    Image(systemName: timerRunning ? "pause.fill" : "play.fill")
-                                    Text(timerRunning ? "Pause" : "Start").bold()
-                                }.foregroundColor(.white)
+                                    Image(systemName: session.timerRunning ? "pause.fill" : "play.fill")
+                                    Text(session.timerRunning ? "Pause" : "Start").bold()
+                                }
                             }
-                            .buttonStyle(GlassButtonStyle(isActive: timerRunning, activeColor: .green))
+                            .buttonStyle(GlassButtonStyle(isActive: session.timerRunning, activeColor: .green, role: surfaceRole))
 
-                            Button { resetTimer() } label: {
+                            Button { session.resetTimer() } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "arrow.counterclockwise")
                                     Text("Reset").bold()
-                                }.foregroundColor(.white)
+                                }
                             }
-                            .buttonStyle(GlassButtonStyle())
+                            .buttonStyle(GlassButtonStyle(role: surfaceRole))
 
                             Button { toggleTimelapse() } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: cameraManager.isRecording ? "video.fill" : "video")
                                     Text(cameraManager.isRecording ? "Rec" : "Timelapse").bold()
-                                }.foregroundColor(.white)
+                                }
                             }
-                            .buttonStyle(GlassButtonStyle(isActive: cameraManager.isRecording, activeColor: .red))
+                            .buttonStyle(GlassButtonStyle(isActive: cameraManager.isRecording, activeColor: .red, role: surfaceRole))
                         }
                         .transition(.opacity)
                     }
 
                     // Quick-adjust buttons (only when timer is running, also in battery saver)
-                    if showUI && timerRunning {
+                    if showUI && session.timerRunning {
                         HStack(spacing: 6) {
-                            QuickAdjustButton(minutes: -10) { adjustTimerDuration(by: -10) }
-                            QuickAdjustButton(minutes: -5) { adjustTimerDuration(by: -5) }
+                            QuickAdjustButton(seconds: -30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -30) }
+                            QuickAdjustButton(seconds: -10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -10) }
 
                             Spacer().frame(width: 20)
 
-                            QuickAdjustButton(minutes: 5) { adjustTimerDuration(by: 5) }
-                            QuickAdjustButton(minutes: 10) { adjustTimerDuration(by: 10) }
+                            QuickAdjustButton(seconds: 10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 10) }
+                            QuickAdjustButton(seconds: 30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 30) }
                         }
                         .transition(.opacity)
                     }
@@ -2205,9 +2185,10 @@ struct TimerScreen: View {
                             Image(systemName: "speaker.wave.2.fill")
                             Text(soundManager.currentSound?.displayName ?? "")
                         }
-                        .font(.caption).foregroundColor(.white.opacity(0.7))
+                        .font(.caption)
+                        .foregroundColor(FocusSurfaceStyle.secondaryTextColor(for: colorScheme))
                         .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(Capsule().fill(.white.opacity(0.15)))
+                        .background { FocusSurfaceBackground(shape: Capsule(), role: surfaceRole) }
                         .transition(.opacity)
                     }
                 }
@@ -2224,18 +2205,14 @@ struct TimerScreen: View {
                             
                             VStack(spacing: 12) {
                                 Button {
-                                    if cameraManager.isRecording { cameraManager.stopRecording() }
-                                    cameraManager.cleanup()
-                                    showCameraPreview = false
-                                    liveActivityManager.endActivity()
-                                    resetTimer()
-                                    choicesMade = false
+                                    withAnimation(.easeInOut(duration: 0.35)) { onBack() }
                                 } label: {
-                                    Image(systemName: "xmark")
+                                    Image(systemName: "chevron.left")
                                         .font(.system(size: 18, weight: .semibold))
-                                        .frame(width: 24, height: 24).foregroundColor(.white)
+                                        .frame(width: 24, height: 24)
+                                        .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
                                         .padding(12)
-                                        .background(Circle().fill(.ultraThinMaterial).overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1)))
+                                        .background { FocusSurfaceBackground(shape: Circle(), role: surfaceRole) }
                                         .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                                 }
                                 
@@ -2245,9 +2222,10 @@ struct TimerScreen: View {
                                         showUITemporarily()
                                     } label: {
                                         Image(systemName: "gearshape.fill")
-                                            .font(.system(size: 20)).frame(width: 24, height: 24).foregroundColor(.white)
+                                            .font(.system(size: 20)).frame(width: 24, height: 24)
+                                            .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
                                             .padding(12)
-                                            .background(Circle().fill(.ultraThinMaterial).overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1)))
+                                            .background { FocusSurfaceBackground(shape: Circle(), role: surfaceRole) }
                                             .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                                     }
                                 }
@@ -2257,9 +2235,10 @@ struct TimerScreen: View {
                                         withAnimation(.spring(response: 0.3)) { cameraPreviewHidden = false }
                                     } label: {
                                         Image(systemName: "video.fill")
-                                            .font(.system(size: 18)).frame(width: 24, height: 24).foregroundColor(.white)
+                                            .font(.system(size: 18)).frame(width: 24, height: 24)
+                                            .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
                                             .padding(12)
-                                            .background(Circle().fill(.ultraThinMaterial).overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1)))
+                                            .background { FocusSurfaceBackground(shape: Circle(), role: surfaceRole) }
                                             .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                                     }
                                 }
@@ -2269,10 +2248,19 @@ struct TimerScreen: View {
                                 } label: {
                                     Image(systemName: batterySaverMode ? "sun.max.fill" : "moon.fill")
                                         .font(.system(size: 20)).frame(width: 24, height: 24)
-                                        .foregroundColor(batterySaverMode ? .yellow : .white)
+                                        .foregroundColor(
+                                            batterySaverMode
+                                                ? .yellow
+                                                : FocusSurfaceStyle.textColor(for: colorScheme)
+                                        )
                                         .padding(12)
-                                        .background(Circle().fill(.ultraThinMaterial).opacity(batterySaverMode ? 0.3 : 1.0)
-                                            .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1)))
+                                        .background {
+                                            FocusSurfaceBackground(
+                                                shape: Circle(),
+                                                role: surfaceRole,
+                                                accent: batterySaverMode ? .yellow : nil
+                                            )
+                                        }
                                         .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
                                 }
                             }
@@ -2291,103 +2279,42 @@ struct TimerScreen: View {
             }
         }
         .onTapGesture { showUITemporarily() }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 50).onEnded { value in
+                if !showSettings && value.translation.width > 50 && abs(value.translation.height) < 100 {
+                    withAnimation(.easeInOut(duration: 0.35)) { onBack() }
+                }
+            }
+        )
         .onAppear {
             showUITemporarily()
-            restoreTimerStateIfNeeded()
-        }
-        .onReceive(timer) { _ in
-            guard timerRunning, !isTransitioningPhase, let endTime = timerEndTime else { return }
-            
-            let remaining = Int(endTime.timeIntervalSince(Date()))
-            
-            if remaining > 0 {
-                // Track study time based on change
-                if isStudy {
-                    let studied = secondsLeft - remaining
-                    if studied > 0 { studySecondsThisSession += studied }
-                }
-                secondsLeft = remaining
-            } else {
-                secondsLeft = 0
-                timerCompleted()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
-            updateTimerFromBackground()
-            if timerRunning && !batterySaverMode { motionManager.startMotionUpdates() }
-            
-            // Resume camera if it was active
-            if showCameraPreview {
-                cameraManager.resumeSession()
-            }
-            
-            // If timer is not running, clean up any orphaned Live Activities
-            if !timerRunning {
-                liveActivityManager.cleanupOrphanedActivities()
-            }
+            if session.timerRunning && !batterySaverMode { motionManager.startMotionUpdates() }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
-            if timerRunning {
-                backgroundTime = Date()
-                // Save timer state in case iOS kills the app
-                TimerStateManager.shared.saveState(
-                    timerRunning: timerRunning,
-                    isStudy: isStudy,
-                    timerStartTime: timerStartTime,
-                    timerEndTime: timerEndTime,
-                    consecutiveSessions: consecutiveSessions,
-                    isLongBreak: isLongBreak,
-                    studyTime: studyTime,
-                    restTime: restTime
-                )
-            }
             motionManager.stopMotionUpdates()
-            // Pause camera to save memory/battery in background
             cameraManager.pauseSession()
         }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
-            // Save state but keep Live Activity running
-            if timerRunning {
-                TimerStateManager.shared.saveState(
-                    timerRunning: timerRunning,
-                    isStudy: isStudy,
-                    timerStartTime: timerStartTime,
-                    timerEndTime: timerEndTime,
-                    consecutiveSessions: consecutiveSessions,
-                    isLongBreak: isLongBreak,
-                    studyTime: studyTime,
-                    restTime: restTime
-                )
-            }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            if session.timerRunning && !batterySaverMode { motionManager.startMotionUpdates() }
+            if showCameraPreview { cameraManager.resumeSession() }
         }
         .alert("Timelapse", isPresented: $showTimelapseAlert) {
             Button("OK", role: .cancel) { }
         } message: { Text(timelapseMessage ?? "") }
-        .onChange(of: studyTime) { _, newValue in
-            if !timerRunning && isStudy { secondsLeft = newValue * 60 }
+        .onChange(of: session.timerRunning) { _, running in
+            if running && !batterySaverMode { motionManager.startMotionUpdates() }
+            else { motionManager.stopMotionUpdates() }
         }
-        .onChange(of: restTime) { _, newValue in
-            if !timerRunning && !isStudy && !isLongBreak { secondsLeft = newValue * 60 }
-        }
-        .onChange(of: batterySaverMode) { _, newValue in
-            if newValue { motionManager.stopMotionUpdates() }
-            else if timerRunning { motionManager.startMotionUpdates() }
-        }
-        .onChange(of: choicesMade) { _, newValue in
-            if !newValue {
-                if cameraManager.isRecording { cameraManager.stopRecording() }
-                cameraManager.cleanup()
-                showCameraPreview = false
-                liveActivityManager.endActivity()
-            }
+        .onChange(of: batterySaverMode) { _, saver in
+            if saver { motionManager.stopMotionUpdates() }
+            else if session.timerRunning { motionManager.startMotionUpdates() }
         }
         .onDisappear {
             if cameraManager.isRecording { cameraManager.stopRecording() }
             cameraManager.cleanup()
             showCameraPreview = false
-            soundManager.stop()
+            hideTimer?.invalidate()
             motionManager.stopMotionUpdates()
-            liveActivityManager.endActivity()
         }
     }
     
@@ -2396,220 +2323,6 @@ struct TimerScreen: View {
         hideTimer?.invalidate()
         hideTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
             withAnimation(.easeInOut(duration: 0.3)) { showUI = false }
-        }
-    }
-    
-    func restoreTimerStateIfNeeded() {
-        guard let state = TimerStateManager.shared.loadState() else { return }
-        guard let endTime = state.timerEndTime else { return }
-        
-        let remaining = Int(endTime.timeIntervalSince(Date()))
-        
-        if remaining > 0 {
-            // Timer is still running - restore state
-            isStudy = state.isStudy
-            timerStartTime = state.timerStartTime
-            timerEndTime = state.timerEndTime
-            consecutiveSessions = state.consecutiveSessions
-            isLongBreak = state.isLongBreak
-            secondsLeft = remaining
-            timerRunning = true
-            
-            // Restart Live Activity with correct state
-            if let startTime = timerStartTime {
-                liveActivityManager.startActivity(startTime: startTime, endTime: endTime, isStudy: isStudy, sessionNumber: consecutiveSessions + 1,
-                                                 totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
-            }
-            
-            print("♻️ Timer state restored: isStudy=\(isStudy), remaining=\(remaining)s")
-        } else {
-            // Timer completed while app was killed - handle phase transitions
-            var currentEndTime = endTime
-            var currentIsStudy = state.isStudy
-            var currentConsecutiveSessions = state.consecutiveSessions
-            var currentIsLongBreak = state.isLongBreak
-            let savedStudyTime = state.studyTime > 0 ? state.studyTime : studyTime
-            let savedRestTime = state.restTime > 0 ? state.restTime : restTime
-            
-            // Calculate how many phases have completed (cap at 500 to prevent freeze if app was killed for very long)
-            var iterations = 0
-            let maxIterations = 500
-            while currentEndTime.timeIntervalSince(Date()) <= 0 && iterations < maxIterations {
-                iterations += 1
-                if currentIsStudy {
-                    currentConsecutiveSessions += 1
-                    if settings.longBreakEnabled && currentConsecutiveSessions >= settings.sessionsUntilLongBreak {
-                        currentIsLongBreak = true
-                        currentConsecutiveSessions = 0
-                        currentEndTime = currentEndTime.addingTimeInterval(TimeInterval(settings.longBreakTime * 60))
-                    } else {
-                        currentIsLongBreak = false
-                        currentEndTime = currentEndTime.addingTimeInterval(TimeInterval(savedRestTime * 60))
-                    }
-                    currentIsStudy = false
-                } else {
-                    currentIsStudy = true
-                    currentIsLongBreak = false
-                    currentEndTime = currentEndTime.addingTimeInterval(TimeInterval(savedStudyTime * 60))
-                }
-            }
-
-            // If we hit the iteration cap, the app was killed too long ago — just reset
-            if iterations >= maxIterations {
-                TimerStateManager.shared.clearState()
-                return
-            }
-
-            // Set new state
-            isStudy = currentIsStudy
-            consecutiveSessions = currentConsecutiveSessions
-            isLongBreak = currentIsLongBreak
-            timerStartTime = Date()
-            timerEndTime = currentEndTime
-            secondsLeft = Int(currentEndTime.timeIntervalSince(Date()))
-            timerRunning = true
-            
-            // Start fresh Live Activity
-            liveActivityManager.startActivity(startTime: timerStartTime!, endTime: timerEndTime!, isStudy: isStudy, sessionNumber: consecutiveSessions + 1,
-                                             totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
-            
-            print("♻️ Timer state restored after completion: isStudy=\(isStudy), remaining=\(secondsLeft)s")
-        }
-        
-        // Clear saved state since we've restored it
-        TimerStateManager.shared.clearState()
-    }
-    
-    func toggleTimer() {
-        timerRunning.toggle()
-        
-        if timerRunning {
-            timerStartTime = Date()
-            timerEndTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
-            scheduleTimerEndNotification()
-            if !batterySaverMode { motionManager.startMotionUpdates() }
-            if isStudy && soundManager.currentSound != nil && !soundManager.isPlaying { soundManager.play() }
-            
-            let startTime = timerStartTime!
-            let endTime = timerEndTime!
-            print("🟡 Timer started - attempting to start Live Activity...")
-            print("   - secondsLeft: \(secondsLeft)")
-            print("   - startTime: \(startTime)")
-            print("   - endTime: \(endTime)")
-            liveActivityManager.startActivity(startTime: startTime, endTime: endTime, isStudy: isStudy, sessionNumber: consecutiveSessions + 1,
-                                             totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
-        } else {
-            cancelScheduledNotifications()
-            motionManager.stopMotionUpdates()
-
-            // Update Live Activity to show paused state before clearing times
-            let pausedEndTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
-            let pausedStartTime = timerStartTime ?? Date()
-            liveActivityManager.updateActivity(startTime: pausedStartTime, endTime: pausedEndTime, isStudy: isStudy, isPaused: true,
-                                               sessionNumber: consecutiveSessions + 1,
-                                               totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
-
-            timerStartTime = nil
-            timerEndTime = nil
-        }
-    }
-
-    func adjustTimerDuration(by minutes: Int) {
-        let adjustSeconds = minutes * 60
-        let newSecondsLeft = max(60, secondsLeft + adjustSeconds)
-        secondsLeft = newSecondsLeft
-
-        // Update the bound study/rest time
-        if isStudy {
-            studyTime = max(1, (newSecondsLeft + 59) / 60) // Round up to nearest minute
-        } else if !isLongBreak {
-            restTime = max(1, (newSecondsLeft + 59) / 60)
-        }
-
-        // If timer is running, update the end time
-        if timerRunning {
-            timerEndTime = Date().addingTimeInterval(TimeInterval(newSecondsLeft))
-            cancelScheduledNotifications()
-            scheduleTimerEndNotification()
-
-            // Update live activity
-            if let startTime = timerStartTime, let endTime = timerEndTime {
-                liveActivityManager.updateActivity(
-                    startTime: startTime, endTime: endTime,
-                    isStudy: isStudy, isPaused: false,
-                    sessionNumber: consecutiveSessions + 1,
-                    totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4
-                )
-            }
-        }
-    }
-
-    func resetTimer() {
-        timerRunning = false
-        isStudy = true
-        isLongBreak = false
-        secondsLeft = studyTime * 60
-        timerStartTime = nil
-        timerEndTime = nil
-        backgroundTime = nil
-        sessionComplete = false
-        studySecondsThisSession = 0
-        cancelScheduledNotifications()
-        soundManager.stop()
-        motionManager.stopMotionUpdates()
-        liveActivityManager.endActivity()
-        TimerStateManager.shared.clearState()
-    }
-    
-    func timerCompleted() {
-        // Prevent re-entry if timer fires again during phase transition
-        guard !isTransitioningPhase else { return }
-        isTransitioningPhase = true
-        defer { isTransitioningPhase = false }
-
-        if !settings.isMuted { playDingSound() }
-        cancelScheduledNotifications()
-        scheduleCompletionNotification()
-        
-        let wasStudy = isStudy
-        
-        if wasStudy {
-            stats.addStudyTime(seconds: studySecondsThisSession)
-            studySecondsThisSession = 0
-            consecutiveSessions += 1
-            soundManager.pause()
-            
-            if settings.longBreakEnabled && consecutiveSessions >= settings.sessionsUntilLongBreak {
-                isLongBreak = true
-                consecutiveSessions = 0
-                secondsLeft = settings.longBreakTime * 60
-            } else {
-                isLongBreak = false
-                secondsLeft = restTime * 60
-            }
-            isStudy = false
-        } else {
-            isStudy = true
-            isLongBreak = false
-            secondsLeft = studyTime * 60
-            if timerRunning && soundManager.currentSound != nil { soundManager.play() }
-        }
-        
-        if timerRunning {
-            timerStartTime = Date()
-            timerEndTime = Date().addingTimeInterval(TimeInterval(secondsLeft))
-            scheduleTimerEndNotification()
-            let startTime = timerStartTime!
-            let endTime = timerEndTime!
-            print("🔄 Timer completed - switching mode:")
-            print("   - wasStudy: \(wasStudy), nowStudy: \(isStudy)")
-            print("   - new secondsLeft: \(secondsLeft)")
-            print("   - startTime: \(startTime)")
-            print("   - endTime: \(endTime)")
-            
-            liveActivityManager.updateActivity(startTime: startTime, endTime: endTime, isStudy: isStudy, isPaused: false,
-                                              sessionNumber: consecutiveSessions + 1,
-                                              totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
         }
     }
     
@@ -2655,112 +2368,43 @@ struct TimerScreen: View {
         }
     }
     
-    func updateTimerFromBackground() {
-        guard let backgroundTime = backgroundTime, timerRunning, let endTime = timerEndTime else { return }
-        
-        // Calculate remaining time from the original endTime
-        let remaining = Int(endTime.timeIntervalSince(Date()))
-        
-        if remaining <= 0 {
-            // Timer completed while in background
-            secondsLeft = 0
-            timerCompleted()
-        } else {
-            // Update secondsLeft from endTime (keeps it in sync)
-            let previousSecondsLeft = secondsLeft
-            secondsLeft = remaining
-            
-            // Track study time
-            if isStudy {
-                let studied = previousSecondsLeft - remaining
-                if studied > 0 { studySecondsThisSession += studied }
-            }
-            
-            // Update Live Activity to ensure it's in sync - use original startTime
-            if let startTime = timerStartTime {
-                liveActivityManager.updateActivity(startTime: startTime, endTime: timerEndTime!, isStudy: isStudy, isPaused: false,
-                                                  sessionNumber: consecutiveSessions + 1,
-                                                  totalSessions: settings.longBreakEnabled ? settings.sessionsUntilLongBreak : 4)
-            }
-        }
-        self.backgroundTime = nil
-    }
-    
-    func scheduleTimerEndNotification() {
-        cancelScheduledNotifications()
-        guard settings.timerNotificationsEnabled, secondsLeft > 0 else { return }
-        
-        let content = UNMutableNotificationContent()
-        content.title = isStudy ? "Lock In Time Complete!" : "Chill Time Complete!"
-        content.body = isStudy ? "Time for a break!" : "Time to study!"
-        content.sound = .default
-        
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(secondsLeft), repeats: false)
-        let request = UNNotificationRequest(identifier: "timer_end", content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request) { _ in }
-    }
-    
-    func scheduleCompletionNotification() {
-        guard settings.timerNotificationsEnabled else { return }
-        
-        let content = UNMutableNotificationContent()
-        content.title = isStudy ? "Lock In Time Done!" : "Chill Time Done!"
-        content.body = isStudy ? "Time to rest!" : "Time to study!"
-        content.sound = .default
-        
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
-        let request = UNNotificationRequest(identifier: "timer_completed", content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request) { _ in }
-    }
-
-    func cancelScheduledNotifications() {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["timer_end", "timer_completed"])
-    }
-    
     func timeString(from seconds: Int) -> String {
         String(format: "%02d:%02d", seconds / 60, seconds % 60)
-    }
-    
-    func playDingSound() {
-        if let url = Bundle.main.url(forResource: "ding", withExtension: "mp3") {
-            do {
-                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers, .duckOthers])
-                try AVAudioSession.sharedInstance().setActive(true)
-                audioPlayer = try AVAudioPlayer(contentsOf: url)
-                audioPlayer?.volume = 1.0
-                audioPlayer?.prepareToPlay()
-                audioPlayer?.play()
-                return
-            } catch { }
-        }
-        AudioServicesPlaySystemSound(1007)
     }
 }
 
 // MARK: - Content View
+enum AppPage: Int {
+    case tracker, picker, timer
+}
+
 struct ContentView: View {
-    @State private var studyTime = 25
-    @State private var restTime = 5
-    @State private var choicesMade = false
-    @State private var showLogoScreen = false
-    @State private var showTimerFlow = false
-    @StateObject private var settings = AppSettings()
-    @StateObject private var stats = StatsManager()
-    @StateObject private var soundManager = FocusSoundManager()
+    @State private var page: AppPage
+    @State private var showLogoScreen: Bool
+    @StateObject private var settings: AppSettings
+    @StateObject private var stats: StatsManager
+    @StateObject private var soundManager: FocusSoundManager
+    @StateObject private var session: PomodoroSession
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(BackgroundTheme.storageKey) private var selectedTheme = BackgroundTheme.violet.rawValue
 
     init() {
-        let logoViewCount = UserDefaults.standard.integer(forKey: "logoViewCount")
-        // Check if there's a saved timer running - skip logo screen
-        let timerRunning = UserDefaults.standard.bool(forKey: "timerRunning")
-        _showLogoScreen = State(initialValue: !timerRunning && logoViewCount < 2)
-        _showTimerFlow = State(initialValue: timerRunning)
-        _choicesMade = State(initialValue: timerRunning)
-        
-        // Restore study/rest times
-        let savedStudyTime = UserDefaults.standard.integer(forKey: "savedStudyTime")
-        let savedRestTime = UserDefaults.standard.integer(forKey: "savedRestTime")
-        if savedStudyTime > 0 { _studyTime = State(initialValue: savedStudyTime) }
-        if savedRestTime > 0 { _restTime = State(initialValue: savedRestTime) }
+        let settings = AppSettings()
+        let stats = StatsManager()
+        let soundManager = FocusSoundManager()
+        let session = PomodoroSession(settings: settings, stats: stats, soundManager: soundManager)
+        _settings = StateObject(wrappedValue: settings)
+        _stats = StateObject(wrappedValue: stats)
+        _soundManager = StateObject(wrappedValue: soundManager)
+        _session = StateObject(wrappedValue: session)
+        _page = State(initialValue: session.hasSession ? .timer : .tracker)
+        _showLogoScreen = State(initialValue: !session.hasSession && UserDefaults.standard.integer(forKey: "logoViewCount") < 2)
+    }
+
+    private func navigate(to destination: AppPage) {
+        guard destination != page else { return }
+        // Fade whole scenes in place so their backgrounds never expose a sliding edge.
+        withAnimation(.easeInOut(duration: 0.4)) { page = destination }
     }
 
     var body: some View {
@@ -2768,36 +2412,39 @@ struct ContentView: View {
             if showLogoScreen {
                 LogoScreen(isFinished: $showLogoScreen)
                     .transition(.opacity)
-            } else if !showTimerFlow {
-                TrackerView(showTimer: $showTimerFlow, stats: stats, settings: settings)
-                    .transition(.opacity)
-            } else if !choicesMade {
-                PickerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade, showTimerFlow: $showTimerFlow, stats: stats, settings: settings)
-                    .transition(.opacity)
             } else {
-                TimerScreen(studyTime: $studyTime, restTime: $restTime, choicesMade: $choicesMade, settings: settings, stats: stats, soundManager: soundManager)
-                    .transition(.opacity)
+                Group {
+                    switch page {
+                    case .tracker:
+                        TrackerView(showTimer: Binding(get: { page != .tracker }, set: { if $0 { navigate(to: .picker) } }),
+                                    stats: stats, settings: settings)
+                    case .picker:
+                        PickerScreen(session: session, onBack: { navigate(to: .tracker) }, onOpenTimer: { navigate(to: .timer) })
+                    case .timer:
+                        TimerScreen(session: session, settings: settings, soundManager: soundManager,
+                                    onBack: { navigate(to: .picker) })
+                    }
+                }
+                .id(page)
+                .transition(.opacity)
+                .zIndex(1)
             }
         }
         .animation(.easeInOut(duration: 0.25), value: showLogoScreen)
-        .animation(.easeInOut(duration: 0.25), value: showTimerFlow)
-        .animation(.easeInOut(duration: 0.25), value: choicesMade)
         .onAppear {
             requestNotificationPermission()
-            // Clean up any orphaned Live Activities if not in timer flow
-            if !showTimerFlow {
-                LiveActivityManager.shared.cleanupOrphanedActivities()
-            }
+            settings.applyTheme(BackgroundTheme(rawValue: selectedTheme) ?? .violet, scheme: colorScheme)
+            if !session.hasSession { LiveActivityManager.shared.cleanupOrphanedActivities() }
         }
-        .onChange(of: showTimerFlow) { oldValue, newValue in
-            if newValue {
-                OrientationManager.shared.unlock()
-            } else {
-                OrientationManager.shared.lockToPortrait()
-                // Clean up any Live Activities and saved state when leaving timer flow
-                LiveActivityManager.shared.cleanupOrphanedActivities()
-                TimerStateManager.shared.clearState()
-            }
+        .onChange(of: page) { _, destination in
+            if destination == .tracker { OrientationManager.shared.lockToPortrait() }
+            else { OrientationManager.shared.unlock() }
+        }
+        .onChange(of: selectedTheme) { _, value in
+            settings.applyTheme(BackgroundTheme(rawValue: value) ?? .violet, scheme: colorScheme)
+        }
+        .onChange(of: colorScheme) { _, scheme in
+            settings.applyTheme(BackgroundTheme(rawValue: selectedTheme) ?? .violet, scheme: scheme)
         }
     }
 

@@ -909,6 +909,11 @@ class HabitManager: ObservableObject {
 // MARK: - Tracker Background
 struct TrackerBackground: View {
     @Environment(\.colorScheme) var colorScheme
+    @AppStorage(BackgroundTheme.storageKey) private var selectedTheme = BackgroundTheme.violet.rawValue
+
+    private var palette: WavePalette {
+        (BackgroundTheme(rawValue: selectedTheme) ?? .violet).trackerPalette(for: colorScheme)
+    }
     
     @State private var wave1FromTop: Bool = false
     @State private var wave2FromTop: Bool = true
@@ -924,7 +929,7 @@ struct TrackerBackground: View {
             GeometryReader { geo in
                 ZStack {
                     if colorScheme == .dark {
-                        Color(red: 0.12, green: 0.10, blue: 0.25)
+                        palette.background
                         
                         HorizontalFluidWave(
                             time: time,
@@ -933,7 +938,7 @@ struct TrackerBackground: View {
                             amplitude: 45,
                             frequency: 0.8,
                             speed: 0.5 * speedMultiplier1,
-                            color: Color(red: 0.25, green: 0.20, blue: 0.5)
+                            color: palette.back
                         )
                         
                         HorizontalFluidWave(
@@ -943,7 +948,7 @@ struct TrackerBackground: View {
                             amplitude: 40,
                             frequency: 1.0,
                             speed: 0.65 * speedMultiplier2,
-                            color: Color(red: 0.4, green: 0.25, blue: 0.65)
+                            color: palette.middle
                         )
                         
                         HorizontalFluidWave(
@@ -953,11 +958,11 @@ struct TrackerBackground: View {
                             amplitude: 35,
                             frequency: 1.2,
                             speed: 0.8 * speedMultiplier3,
-                            color: Color(red: 0.55, green: 0.3, blue: 0.75)
+                            color: palette.front
                         )
                         
                     } else {
-                        Color(red: 0.6, green: 0.7, blue: 0.9)
+                        palette.background
                         
                         HorizontalFluidWave(
                             time: time,
@@ -966,7 +971,7 @@ struct TrackerBackground: View {
                             amplitude: 50,
                             frequency: 0.85,
                             speed: 0.5 * speedMultiplier1,
-                            color: Color(red: 0.4, green: 0.55, blue: 0.85)
+                            color: palette.back
                         )
                         
                         HorizontalFluidWave(
@@ -976,7 +981,7 @@ struct TrackerBackground: View {
                             amplitude: 45,
                             frequency: 1.05,
                             speed: 0.65 * speedMultiplier2,
-                            color: Color(red: 0.5, green: 0.45, blue: 0.8)
+                            color: palette.middle
                         )
                         
                         HorizontalFluidWave(
@@ -986,7 +991,7 @@ struct TrackerBackground: View {
                             amplitude: 40,
                             frequency: 1.25,
                             speed: 0.8 * speedMultiplier3,
-                            color: Color(red: 0.6, green: 0.4, blue: 0.75)
+                            color: palette.front
                         )
                     }
                 }
@@ -1130,14 +1135,7 @@ struct ContributionGridView: View {
         }
         .padding(8)
         .frame(height: showFullGrid ? nil : cardHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(.white.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .background { HabitCardBackground(tint: habit.color.color) }
     }
     
     private var filledCellsForDisplay: Int {
@@ -1397,14 +1395,7 @@ struct TextCounterView: View {
         }
         .padding(12)
         .frame(height: cardHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(.white.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .background { HabitCardBackground(tint: habit.color.color) }
         .onReceive(timer) { _ in
             currentTime = Date()
         }
@@ -1680,14 +1671,7 @@ struct TimelineBarView: View {
         }
         .padding(12)
         .frame(height: cardHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(.white.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .background { HabitCardBackground(tint: habit.color.color) }
         .onReceive(timer) { _ in
             currentTime = Date()
         }
@@ -3488,14 +3472,7 @@ struct MinimalHabitView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(.white.opacity(0.15), lineWidth: 1)
-                )
-        )
+        .background { HabitCardBackground(tint: habit.color.color, cornerRadius: 12) }
     }
 }
 
@@ -3515,7 +3492,7 @@ struct HabitsSection: View {
                     .foregroundColor(.green)
                 Text("Habits")
                     .font(.title3.weight(.semibold))
-                    .foregroundColor(.white)
+                    .modifier(ThemeHeadingStyle())
                 Spacer()
 
                 // Hide/Show toggle
@@ -3811,10 +3788,6 @@ struct TrackerView: View {
     
     private var orientationManager: OrientationManager { OrientationManager.shared }
     
-    @State private var showHeader = false
-    @State private var showLockInButton = false
-    @State private var showStatsCard = false
-    @State private var showHabitsSection = false
     @State private var selectedHabit: Habit?
     @State private var showCompletedGoals = false
     
@@ -3825,7 +3798,7 @@ struct TrackerView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
                     // Header with logo and title
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         if colorScheme == .light {
                             Image("logo4")
                                 .resizable()
@@ -3836,7 +3809,7 @@ struct TrackerView: View {
                                     RoundedRectangle(cornerRadius: 8)
                                         .stroke(Color.white, lineWidth: 2)
                                 )
-                                .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 2)
+                                .modifier(TrackerHeaderShadow())
                                 .onTapGesture {
                                     showCompletedGoals = true
                                 }
@@ -3850,7 +3823,7 @@ struct TrackerView: View {
                                     RoundedRectangle(cornerRadius: 8)
                                         .stroke(Color.white, lineWidth: 2)
                                 )
-                                .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 2)
+                                .modifier(TrackerHeaderShadow())
                                 .onTapGesture {
                                     showCompletedGoals = true
                                 }
@@ -3858,17 +3831,18 @@ struct TrackerView: View {
                         
                         Text("Tracker")
                             .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
+                            .modifier(ThemeHeadingStyle())
+                            .modifier(TrackerHeaderShadow())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        Spacer(minLength: 0)
+                        BackgroundThemePicker()
                     }
                     .padding(.top, 60)
-                    .opacity(showHeader ? 1 : 0)
-                    .offset(y: showHeader ? 0 : 20)
-                    .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showHeader)
                     
                     // Lock In Now button
                     Button {
-                        withAnimation(.spring(response: 0.4)) {
+                        withAnimation(.easeInOut(duration: 0.35)) {
                             showTimer = true
                         }
                     } label: {
@@ -3878,41 +3852,30 @@ struct TrackerView: View {
                                 .foregroundColor(.orange)
                             Text("Lock In Now")
                                 .font(.title3.bold())
-                                .foregroundColor(.white)
+                                .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
                             Spacer()
                             Image(systemName: "chevron.right")
                                 .font(.body.weight(.semibold))
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(FocusSurfaceStyle.secondaryTextColor(for: colorScheme))
                         }
                         .padding(.horizontal, 18)
                         .padding(.vertical, 16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16)
-                                .fill(.ultraThinMaterial)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 16)
-                                        .stroke(.white.opacity(0.2), lineWidth: 1)
-                                )
-                        )
+                        .background {
+                            FocusSurfaceBackground(
+                                shape: RoundedRectangle(cornerRadius: 16, style: .continuous),
+                                role: .tracker
+                            )
+                        }
                     }
-                    .opacity(showLockInButton ? 1 : 0)
-                    .offset(y: showLockInButton ? 0 : 20)
-                    .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: showLockInButton)
                     
                     // Stats Card
                     StatsCard(stats: stats, habitManager: habitManager)
-                        .opacity(showStatsCard ? 1 : 0)
-                        .offset(y: showStatsCard ? 0 : 20)
-                        .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: showStatsCard)
                     
                     // Habits Section
                     HabitsSection(
                         habitManager: habitManager,
                         selectedHabit: $selectedHabit
                     )
-                    .opacity(showHabitsSection ? 1 : 0)
-                    .offset(y: showHabitsSection ? 0 : 20)
-                    .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: showHabitsSection)
                     
                     Spacer(minLength: 40)
                 }
@@ -3923,7 +3886,7 @@ struct TrackerView: View {
             DragGesture(minimumDistance: 50)
                 .onEnded { value in
                     if value.translation.width < -50 && abs(value.translation.height) < 100 {
-                        withAnimation(.easeInOut(duration: 0.25)) {
+                        withAnimation(.easeInOut(duration: 0.35)) {
                             showTimer = true
                         }
                     }
@@ -3938,16 +3901,6 @@ struct TrackerView: View {
         .onAppear {
             orientationManager.lockToPortrait()
             
-            showHeader = false
-            showLockInButton = false
-            showStatsCard = false
-            showHabitsSection = false
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showHeader = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { showLockInButton = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { showStatsCard = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { showHabitsSection = true }
-            
             // Check for any habits that have reached their goals
             habitManager.checkAndSendGoalNotifications()
         }
@@ -3958,6 +3911,7 @@ struct TrackerView: View {
 struct StatsCard: View {
     @ObservedObject var stats: StatsManager
     @ObservedObject var habitManager: HabitManager
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -3969,7 +3923,7 @@ struct StatsCard: View {
                         .foregroundColor(.orange)
                     Text("Lock In Stats")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
                     Spacer()
                 }
                 
@@ -3987,7 +3941,7 @@ struct StatsCard: View {
             }
             
             Divider()
-                .background(Color.white.opacity(0.2))
+                .background(FocusSurfaceStyle.textColor(for: colorScheme).opacity(0.15))
             
             // Habits Stats Section
             VStack(alignment: .leading, spacing: 12) {
@@ -3997,7 +3951,7 @@ struct StatsCard: View {
                         .foregroundColor(.green)
                     Text("Habits Stats")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
                     Spacer()
                 }
                 
@@ -4009,15 +3963,12 @@ struct StatsCard: View {
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(.white.opacity(0.2), lineWidth: 1)
-                )
-        )
-        .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
+        .background {
+            FocusSurfaceBackground(
+                shape: RoundedRectangle(cornerRadius: 16, style: .continuous),
+                role: .tracker
+            )
+        }
     }
 }
 
@@ -4027,6 +3978,7 @@ struct StatItem: View {
     let value: String
     let label: String
     var color: Color = .orange
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         VStack(spacing: 6) {
@@ -4036,11 +3988,11 @@ struct StatItem: View {
             
             Text(value)
                 .font(.headline.bold())
-                .foregroundColor(.white)
+                .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
             
             Text(label)
                 .font(.caption2)
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(FocusSurfaceStyle.secondaryTextColor(for: colorScheme))
         }
         .frame(maxWidth: .infinity)
     }
