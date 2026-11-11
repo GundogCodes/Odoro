@@ -741,6 +741,8 @@ class CameraManager: NSObject, ObservableObject {
     
     private var captureSession: AVCaptureSession?
     private var videoOutput: AVCaptureVideoDataOutput?
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
+    private var rotationObservation: NSKeyValueObservation?
     private var captureTimer: Timer?
     private var shouldCaptureFrame = false
     
@@ -856,8 +858,28 @@ class CameraManager: NSObject, ObservableObject {
             captureSession?.addOutput(videoOutput)
             
             if let connection = videoOutput.connection(with: .video) {
-                connection.videoRotationAngle = 90
-                connection.isVideoMirrored = true
+                let coordinator = AVCaptureDevice.RotationCoordinator(device: frontCamera, previewLayer: nil)
+                rotationCoordinator = coordinator
+
+                let initialAngle = coordinator.videoRotationAngleForHorizonLevelCapture
+                if connection.isVideoRotationAngleSupported(initialAngle) {
+                    connection.videoRotationAngle = initialAngle
+                }
+                if connection.isVideoMirroringSupported {
+                    connection.automaticallyAdjustsVideoMirroring = false
+                    connection.isVideoMirrored = true
+                }
+
+                rotationObservation = coordinator.observe(
+                    \.videoRotationAngleForHorizonLevelCapture,
+                    options: [.new]
+                ) { [weak self, weak connection] coordinator, _ in
+                    let angle = coordinator.videoRotationAngleForHorizonLevelCapture
+                    self?.sessionQueue.async {
+                        guard let connection, connection.isVideoRotationAngleSupported(angle) else { return }
+                        connection.videoRotationAngle = angle
+                    }
+                }
             }
         }
         
@@ -1011,6 +1033,9 @@ class CameraManager: NSObject, ObservableObject {
     func cleanup() {
         captureTimer?.invalidate()
         captureTimer = nil
+        rotationObservation?.invalidate()
+        rotationObservation = nil
+        rotationCoordinator = nil
         
         DispatchQueue.main.async {
             self.isRecording = false
@@ -1303,11 +1328,12 @@ struct GlassButtonStyle: ButtonStyle {
     var isActive: Bool = false
     var activeColor: Color = .blue
     var role: FocusSurfaceRole = .timer
+    var horizontalPadding: CGFloat = 16
     @Environment(\.colorScheme) private var colorScheme
     
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .padding(.horizontal, 16)
+            .padding(.horizontal, horizontalPadding)
             .padding(.vertical, 10)
             .foregroundStyle(FocusSurfaceStyle.textColor(for: colorScheme))
             .background {
@@ -1323,27 +1349,73 @@ struct GlassButtonStyle: ButtonStyle {
     }
 }
 
+enum DuoControlRailAxis {
+    case horizontal
+    case vertical
+}
+
+struct DuoControlRail<Content: View>: View {
+    let axis: DuoControlRailAxis
+    let content: Content
+
+    init(axis: DuoControlRailAxis, @ViewBuilder content: () -> Content) {
+        self.axis = axis
+        self.content = content()
+    }
+
+    var body: some View {
+        Group {
+            if axis == .horizontal {
+                HStack(spacing: 8) { content }
+            } else {
+                VStack(spacing: 8) { content }
+            }
+        }
+        .padding(7)
+        .background {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(Color.white.opacity(0.06))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(.white.opacity(0.24), lineWidth: 1)
+                }
+        }
+        .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 5)
+    }
+}
+
 // MARK: - Settings Panel
 struct SettingsPanel: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var soundManager: FocusSoundManager
     @Binding var isPresented: Bool
+    let usesVerticalToolbar: Bool
     @State private var currentTip: String = StudyTips.randomTip()
     @State private var selectedTab = 0
     
     var body: some View {
+        let panelCornerRadius: CGFloat = usesVerticalToolbar ? 0 : 28
+
         ZStack {
             VStack(spacing: 0) {
                 HStack {
                     Text("Settings").font(.title2.bold()).foregroundColor(.white)
                     Spacer()
-                    Button {
-                        withAnimation(.spring(response: 0.4)) { isPresented = false }
-                    } label: {
-                        Image(systemName: "xmark.circle.fill").font(.title2).foregroundColor(.white.opacity(0.7))
+                    if !usesVerticalToolbar {
+                        Button {
+                            withAnimation(.spring(response: 0.4)) { isPresented = false }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill").font(.title2).foregroundColor(.white.opacity(0.7))
+                        }
                     }
                 }
-                .padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 16)
+                .padding(.horizontal, 24)
+                .padding(.top, usesVerticalToolbar ? 18 : 24)
+                .padding(.bottom, 16)
                 
                 Picker("", selection: $selectedTab) {
                     Text("General").tag(0)
@@ -1362,22 +1434,27 @@ struct SettingsPanel: View {
                     .padding(.horizontal, 24).padding(.bottom, 24)
                 }
             }
-            .frame(maxWidth: 380, maxHeight: 520)
+            .padding(.trailing, usesVerticalToolbar ? 64 : 0)
+            .frame(
+                maxWidth: usesVerticalToolbar ? .infinity : 380,
+                maxHeight: usesVerticalToolbar ? .infinity : 520
+            )
             .background(
                 ZStack {
-                    RoundedRectangle(cornerRadius: 28).fill(.ultraThinMaterial)
-                    RoundedRectangle(cornerRadius: 28).fill(Color.black.opacity(0.35))
-                    RoundedRectangle(cornerRadius: 28)
+                    RoundedRectangle(cornerRadius: panelCornerRadius).fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: panelCornerRadius).fill(Color.black.opacity(0.35))
+                    RoundedRectangle(cornerRadius: panelCornerRadius)
                         .fill(LinearGradient(colors: [.purple.opacity(0.25), .blue.opacity(0.15)],
                                             startPoint: .topLeading, endPoint: .bottomTrailing))
-                    RoundedRectangle(cornerRadius: 28)
+                    RoundedRectangle(cornerRadius: panelCornerRadius)
                         .stroke(LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.1)],
                                               startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.5)
                 }
             )
-            .clipShape(RoundedRectangle(cornerRadius: 28))
+            .clipShape(RoundedRectangle(cornerRadius: panelCornerRadius))
             .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
         }
+        .ignoresSafeArea(.container, edges: usesVerticalToolbar ? .all : [])
     }
     
     var generalSettings: some View {
@@ -1725,12 +1802,21 @@ struct PickerScreen: View {
     @ObservedObject var session: PomodoroSession
     let onBack: () -> Void
     let onOpenTimer: () -> Void
+    let usesVerticalToolbar: Bool
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     var body: some View {
         GeometryReader { geo in
             let isCompactHeight = geo.size.height < 600
-            let pickerHeight = min(max(220, geo.size.height * (isCompactHeight ? 0.52 : 0.58)), 520)
+            let isLandscape = geo.size.width > geo.size.height
+            let pickerHeight = usesVerticalToolbar
+                ? min(max(240, geo.size.height * (isCompactHeight ? 0.76 : 0.82)), 560)
+                : min(max(220, geo.size.height * (isCompactHeight ? 0.52 : 0.58)), 520)
+            let titleFont: Font = usesVerticalToolbar && isCompactHeight
+                ? .headline
+                : .title2.weight(.bold)
 
             ZStack {
                 AnimatedMeshBackground()
@@ -1753,7 +1839,7 @@ struct PickerScreen: View {
                                 .buttonStyle(GlassButtonStyle())
                         }
                         .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
-                        .padding(28)
+                        .padding(usesVerticalToolbar && isCompactHeight ? 20 : 28)
                         .frame(maxWidth: .infinity)
                         .background {
                             FocusSurfaceBackground(
@@ -1761,22 +1847,27 @@ struct PickerScreen: View {
                                 role: .picker
                             )
                         }
+                        .frame(
+                            maxWidth: usesVerticalToolbar && horizontalSizeClass == .regular
+                                ? 480
+                                : .infinity
+                        )
                         .padding(.horizontal, 20)
                     } else {
                         // Titles above pickers
                         HStack(spacing: 12) {
                             Text("Lock In Time")
-                                .font(.title2.weight(.bold))
+                                .font(titleFont)
                                 .modifier(ThemeHeadingStyle())
                                 .frame(maxWidth: .infinity)
                             
                             Text("Chill Time")
-                                .font(.title2.weight(.bold))
+                                .font(titleFont)
                                 .modifier(ThemeHeadingStyle())
                                 .frame(maxWidth: .infinity)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 12)
+                        .padding(.horizontal, usesVerticalToolbar && isLandscape ? 72 : 16)
+                        .padding(.bottom, usesVerticalToolbar && isCompactHeight ? 8 : 12)
                         
                         // Pickers side by side
                         HStack(spacing: 12) {
@@ -1790,52 +1881,92 @@ struct PickerScreen: View {
                                 height: pickerHeight
                             )
                         }
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, usesVerticalToolbar && isLandscape ? 72 : 16)
                         
-                        // Done button
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.35)) { onOpenTimer() }
-                        } label: {
-                            Text("Done")
-                                .font(.body.weight(.semibold))
-                                .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
-                                .padding(.horizontal, 24)
-                                .padding(.vertical, 10)
-                                .background {
-                                    FocusSurfaceBackground(shape: Capsule(), role: .picker, accent: .blue)
-                                }
-                                .shadow(radius: 10)
+                        if !usesVerticalToolbar {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.35)) { onOpenTimer() }
+                            } label: {
+                                Text("Done")
+                                    .font(.body.weight(.semibold))
+                                    .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 10)
+                                    .background {
+                                        FocusSurfaceBackground(shape: Capsule(), role: .picker, accent: .blue)
+                                    }
+                                    .shadow(radius: 10)
+                            }
+                            .padding(.top, 24)
                         }
-                        .padding(.top, 24)
                     }
                     
-                    Spacer()
+                    Spacer(minLength: usesVerticalToolbar && isLandscape ? 70 : 0)
                 }
-                .frame(maxWidth: 760)
+                .frame(
+                    maxWidth: usesVerticalToolbar && horizontalSizeClass == .regular
+                        ? 720
+                        : 760
+                )
                 .frame(maxWidth: .infinity)
                 
-                // Back button
-                VStack {
-                    HStack {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.35)) { onBack() }
-                        } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 18, weight: .semibold))
-                                .frame(width: 24, height: 24)
-                                .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
-                                .padding(12)
-                                .background { FocusSurfaceBackground(shape: Circle(), role: .picker) }
-                                .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
+                if !usesVerticalToolbar {
+                    VStack {
+                        HStack {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.35)) { onBack() }
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .frame(width: 24, height: 24)
+                                    .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
+                                    .padding(12)
+                                    .background { FocusSurfaceBackground(shape: Circle(), role: .picker) }
+                                    .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 3)
+                            }
+                            .padding(.leading, 20)
+                            .padding(.top, 8)
+                            Spacer()
                         }
-                        .padding(.leading, 20)
-                        .padding(.top, 8)
                         Spacer()
                     }
-                    Spacer()
+                } else {
+                    Group {
+                        if isLandscape {
+                            VStack {
+                                Spacer()
+                                HStack {
+                                    Spacer()
+                                    duoPickerSideRail(isLandscape: true)
+                                    Spacer()
+                                }
+                            }
+                            // The landscape rail sits below the picker cards rather than
+                            // sharing their lower visual edge. It remains centered so the
+                            // corner camera cutout cannot interfere with either control.
+                            .padding(.bottom, 4)
+                        } else {
+                            VStack {
+                                Spacer()
+                                HStack {
+                                    Spacer()
+                                    duoPickerSideRail(isLandscape: false)
+                                }
+                                .padding(.trailing, 10)
+                                .padding(.bottom, 18)
+                            }
+                        }
+                    }
+                    .ignoresSafeArea(.container, edges: .horizontal)
+                    .zIndex(20)
                 }
             }
         }
+        .modifier(
+            DuoFullWidthModifier(
+                enabled: usesVerticalToolbar && verticalSizeClass == .compact
+            )
+        )
         .simultaneousGesture(
             DragGesture(minimumDistance: 50)
                 .onEnded { value in
@@ -1846,6 +1977,37 @@ struct PickerScreen: View {
                     }
                 }
         )
+    }
+
+    private func duoPickerSideRail(isLandscape: Bool) -> some View {
+        DuoControlRail(axis: isLandscape ? .horizontal : .vertical) {
+            pickerRailButtons
+        }
+        .foregroundStyle(FocusSurfaceStyle.textColor(for: colorScheme))
+    }
+
+    @ViewBuilder
+    private var pickerRailButtons: some View {
+            Button {
+                withAnimation(.easeInOut(duration: 0.35)) { onBack() }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Back")
+
+            if !session.hasSession {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.35)) { onOpenTimer() }
+                } label: {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.blue)
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Done")
+            }
     }
 }
 
@@ -1927,9 +2089,6 @@ struct ModernPickerCard: View {
                             isUserScrolling = false
                         }
                 )
-                .contentMargins(.vertical, inset, for: .scrollContent)
-                .scrollPosition(id: $scrollPosition, anchor: .center)
-                .scrollTargetBehavior(.viewAligned)
                 .contentMargins(.vertical, inset, for: .scrollContent)
                 .scrollPosition(id: $scrollPosition, anchor: .center)
                 .scrollTargetBehavior(.viewAligned)
@@ -2075,7 +2234,10 @@ struct TimerScreen: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var soundManager: FocusSoundManager
     let onBack: () -> Void
+    let usesVerticalToolbar: Bool
+    let verticalToolbarEdge: HorizontalEdge?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var cameraManager = CameraManager()
     @StateObject private var motionManager = MotionManager()
     @State private var showCameraPreview = false
@@ -2107,7 +2269,12 @@ struct TimerScreen: View {
     var body: some View {
         GeometryReader { geo in
             let isCompactHeight = geo.size.height < 500
-            let timerFontSize = min(batterySaverMode ? 90 : 70, max(48, geo.size.width * 0.18))
+            let isLandscape = geo.size.width > geo.size.height
+            let maximumTimerFontSize: CGFloat = horizontalSizeClass == .regular ? 84 : (batterySaverMode ? 90 : 70)
+            let timerFontSize = min(maximumTimerFontSize, max(42, geo.size.width * 0.18))
+            let horizontalCenteringOffset: CGFloat = verticalToolbarEdge == .trailing
+                ? 16
+                : (verticalToolbarEdge == .leading ? -16 : 0)
 
             ZStack {
                 if batterySaverMode {
@@ -2141,44 +2308,42 @@ struct TimerScreen: View {
                         .foregroundColor(.white)
 
                     if showUI && !batterySaverMode {
-                        HStack(spacing: 16) {
-                            Button { session.toggleTimer() } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: session.timerRunning ? "pause.fill" : "play.fill")
-                                    Text(session.timerRunning ? "Pause" : "Start").bold()
+                        Group {
+                            if usesVerticalToolbar {
+                                duoLabeledTimerActions
+                            } else {
+                                ViewThatFits(in: .horizontal) {
+                                    fullTimerActions
+                                    compactTimerActions
                                 }
                             }
-                            .buttonStyle(GlassButtonStyle(isActive: session.timerRunning, activeColor: .green, role: surfaceRole))
-
-                            Button { session.resetTimer() } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "arrow.counterclockwise")
-                                    Text("Reset").bold()
-                                }
-                            }
-                            .buttonStyle(GlassButtonStyle(role: surfaceRole))
-
-                            Button { toggleTimelapse() } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: cameraManager.isRecording ? "video.fill" : "video")
-                                    Text(cameraManager.isRecording ? "Rec" : "Timelapse").bold()
-                                }
-                            }
-                            .buttonStyle(GlassButtonStyle(isActive: cameraManager.isRecording, activeColor: .red, role: surfaceRole))
                         }
                         .transition(.opacity)
                     }
 
                     // Quick-adjust buttons (only when timer is running, also in battery saver)
                     if showUI && session.timerRunning {
-                        HStack(spacing: 6) {
-                            QuickAdjustButton(seconds: -30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -30) }
-                            QuickAdjustButton(seconds: -10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -10) }
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 6) {
+                                QuickAdjustButton(seconds: -30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -30) }
+                                QuickAdjustButton(seconds: -10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -10) }
 
-                            Spacer().frame(width: 20)
+                                Spacer().frame(width: 20)
 
-                            QuickAdjustButton(seconds: 10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 10) }
-                            QuickAdjustButton(seconds: 30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 30) }
+                                QuickAdjustButton(seconds: 10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 10) }
+                                QuickAdjustButton(seconds: 30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 30) }
+                            }
+
+                            VStack(spacing: 6) {
+                                HStack(spacing: 6) {
+                                    QuickAdjustButton(seconds: -30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -30) }
+                                    QuickAdjustButton(seconds: -10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -10) }
+                                }
+                                HStack(spacing: 6) {
+                                    QuickAdjustButton(seconds: 10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 10) }
+                                    QuickAdjustButton(seconds: 30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 30) }
+                                }
+                            }
                         }
                         .transition(.opacity)
                     }
@@ -2196,7 +2361,8 @@ struct TimerScreen: View {
                     }
                 }
                 .frame(maxWidth: 680)
-                .padding(.horizontal, 20)
+                .padding(.horizontal, usesVerticalToolbar ? 20 : 68)
+                .offset(x: horizontalCenteringOffset)
                 
                 if showCameraPreview && !cameraPreviewHidden && !batterySaverMode {
                     DraggableCameraPreview(
@@ -2206,7 +2372,56 @@ struct TimerScreen: View {
                     )
                 }
                 
-                if showUI {
+                if usesVerticalToolbar && (showUI || showSettings) {
+                    Group {
+                        if showSettings {
+                            if isLandscape {
+                                VStack {
+                                    HStack {
+                                        Spacer()
+                                        duoTimerSideRail(isLandscape: false)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.top, 18)
+                                .padding(.trailing, 10)
+                            } else {
+                                HStack {
+                                    Spacer()
+                                    VStack {
+                                        Spacer()
+                                        duoTimerSideRail(isLandscape: false)
+                                    }
+                                    .padding(.trailing, 10)
+                                    .padding(.bottom, 18)
+                                }
+                            }
+                        } else if isLandscape {
+                            VStack {
+                                Spacer()
+                                HStack {
+                                    Spacer()
+                                    duoTimerSideRail(isLandscape: true)
+                                    Spacer()
+                                }
+                            }
+                            .padding(.bottom, 18)
+                        } else {
+                            HStack {
+                                Spacer()
+                                VStack {
+                                    Spacer()
+                                    duoTimerSideRail(isLandscape: false)
+                                }
+                                .padding(.trailing, 10)
+                                .padding(.bottom, 18)
+                            }
+                        }
+                    }
+                    .ignoresSafeArea(.container, edges: .horizontal)
+                    .transition(.opacity)
+                    .zIndex(20)
+                } else if showUI {
                     HStack {
                         Spacer()
                         VStack {
@@ -2282,11 +2497,20 @@ struct TimerScreen: View {
                 }
                 
                 if showSettings && !batterySaverMode {
-                    SettingsPanel(settings: settings, soundManager: soundManager, isPresented: $showSettings)
+                    SettingsPanel(
+                        settings: settings,
+                        soundManager: soundManager,
+                        isPresented: $showSettings,
+                        usesVerticalToolbar: usesVerticalToolbar
+                    )
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                        .zIndex(10)
                 }
             }
         }
+        .modifier(
+            DuoFullWidthModifier(enabled: usesVerticalToolbar)
+        )
         .onTapGesture { showUITemporarily() }
         .simultaneousGesture(
             DragGesture(minimumDistance: 50).onEnded { value in
@@ -2325,6 +2549,165 @@ struct TimerScreen: View {
             hideTimer?.invalidate()
             motionManager.stopMotionUpdates()
         }
+    }
+
+    private var fullTimerActions: some View {
+        HStack(spacing: 16) {
+            Button { session.toggleTimer() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: session.timerRunning ? "pause.fill" : "play.fill")
+                    Text(session.timerRunning ? "Pause" : "Start").bold()
+                }
+            }
+            .buttonStyle(GlassButtonStyle(isActive: session.timerRunning, activeColor: .green, role: surfaceRole))
+
+            Button { session.resetTimer() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.counterclockwise")
+                    Text("Reset").bold()
+                }
+            }
+            .buttonStyle(GlassButtonStyle(role: surfaceRole))
+
+            Button { toggleTimelapse() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: cameraManager.isRecording ? "video.fill" : "video")
+                    Text(cameraManager.isRecording ? "Rec" : "Timelapse").bold()
+                }
+            }
+            .buttonStyle(GlassButtonStyle(isActive: cameraManager.isRecording, activeColor: .red, role: surfaceRole))
+        }
+    }
+
+    private var duoLabeledTimerActions: some View {
+        HStack(spacing: 8) {
+            Button { session.toggleTimer() } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: session.timerRunning ? "pause.fill" : "play.fill")
+                    Text(session.timerRunning ? "Pause" : "Start").bold()
+                }
+            }
+            .buttonStyle(
+                GlassButtonStyle(
+                    isActive: session.timerRunning,
+                    activeColor: .green,
+                    role: surfaceRole,
+                    horizontalPadding: 10
+                )
+            )
+
+            Button { session.resetTimer() } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.counterclockwise")
+                    Text("Reset").bold()
+                }
+            }
+            .buttonStyle(GlassButtonStyle(role: surfaceRole, horizontalPadding: 10))
+
+            Button { toggleTimelapse() } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: cameraManager.isRecording ? "video.fill" : "video")
+                    Text(cameraManager.isRecording ? "Rec" : "Timelapse").bold()
+                }
+            }
+            .buttonStyle(
+                GlassButtonStyle(
+                    isActive: cameraManager.isRecording,
+                    activeColor: .red,
+                    role: surfaceRole,
+                    horizontalPadding: 10
+                )
+            )
+        }
+    }
+
+    private var compactTimerActions: some View {
+        HStack(spacing: 10) {
+            Button { session.toggleTimer() } label: {
+                Image(systemName: session.timerRunning ? "pause.fill" : "play.fill")
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(GlassButtonStyle(isActive: session.timerRunning, activeColor: .green, role: surfaceRole))
+            .accessibilityLabel(session.timerRunning ? "Pause" : "Start")
+
+            Button { session.resetTimer() } label: {
+                Image(systemName: "arrow.counterclockwise")
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(GlassButtonStyle(role: surfaceRole))
+            .accessibilityLabel("Reset")
+
+            Button { toggleTimelapse() } label: {
+                Image(systemName: cameraManager.isRecording ? "video.fill" : "video")
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(GlassButtonStyle(isActive: cameraManager.isRecording, activeColor: .red, role: surfaceRole))
+            .accessibilityLabel(cameraManager.isRecording ? "Stop timelapse" : "Start timelapse")
+        }
+    }
+
+    private func duoTimerSideRail(isLandscape: Bool) -> some View {
+        DuoControlRail(axis: isLandscape ? .horizontal : .vertical) {
+            timerRailButtons
+        }
+        .foregroundStyle(FocusSurfaceStyle.textColor(for: colorScheme))
+    }
+
+    @ViewBuilder
+    private var timerRailButtons: some View {
+            if showSettings {
+                Button {
+                    withAnimation(.spring(response: 0.4)) { showSettings = false }
+                    showUITemporarily()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Close Settings")
+            } else {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.35)) { onBack() }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Back")
+
+                if !batterySaverMode {
+                    Button {
+                        withAnimation(.spring(response: 0.4)) { showSettings = true }
+                        showUITemporarily()
+                    } label: {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 20))
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Settings")
+                }
+
+                if showCameraPreview && cameraPreviewHidden && !batterySaverMode {
+                    Button {
+                        withAnimation(.spring(response: 0.3)) { cameraPreviewHidden = false }
+                    } label: {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 18))
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Show Camera")
+                }
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.3)) { batterySaverMode.toggle() }
+                } label: {
+                    Image(systemName: batterySaverMode ? "sun.max.fill" : "moon.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(batterySaverMode ? Color.yellow : Color.primary)
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(batterySaverMode ? "Exit Battery Saver" : "Battery Saver")
+            }
     }
     
     func showUITemporarily() {
@@ -2382,9 +2765,68 @@ struct TimerScreen: View {
     }
 }
 
+private struct DuoFullWidthModifier: ViewModifier {
+    let enabled: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 27.1, *), enabled {
+            content
+                .ignoresSafeArea(.container, edges: .horizontal)
+        } else {
+            content
+        }
+    }
+}
+
 // MARK: - Content View
 enum AppPage: Int {
     case tracker, picker, timer
+}
+
+// Standard navigation containers gain a vertical toolbar on iPhone Duo's
+// outer display and on the inner display in landscape. Keep the availability
+// check here so the app continues to run on pre-iOS 27 devices.
+private struct AdaptiveNavigationContainer<Content: View>: View {
+    let page: AppPage
+    let content: (HorizontalEdge?) -> Content
+
+    init(page: AppPage, @ViewBuilder content: @escaping (HorizontalEdge?) -> Content) {
+        self.page = page
+        self.content = content
+    }
+
+    var body: some View {
+        NavigationStack {
+            if #available(iOS 27.1, *) {
+                VerticalToolbarEnvironmentReader(page: page, content: content)
+            } else {
+                content(nil)
+                    .onAppear {
+                        AppOrientationPolicy.update(for: page, usesDuoLayout: false)
+                    }
+            }
+        }
+    }
+}
+
+@available(iOS 27.1, *)
+private struct VerticalToolbarEnvironmentReader<Content: View>: View {
+    @Environment(\.toolbarVerticalEdge) private var toolbarVerticalEdge
+    let page: AppPage
+    let content: (HorizontalEdge?) -> Content
+
+    var body: some View {
+        let usesDuoLayout = toolbarVerticalEdge != nil
+
+        content(toolbarVerticalEdge)
+            .onAppear {
+                AppOrientationPolicy.update(for: page, usesDuoLayout: usesDuoLayout)
+            }
+            .onChange(of: usesDuoLayout) { _, newValue in
+                AppOrientationPolicy.update(for: page, usesDuoLayout: newValue)
+            }
+    }
 }
 
 struct ContentView: View {
@@ -2425,13 +2867,34 @@ struct ContentView: View {
                 Group {
                     switch page {
                     case .tracker:
-                        TrackerView(showTimer: Binding(get: { page != .tracker }, set: { if $0 { navigate(to: .picker) } }),
-                                    stats: stats, settings: settings)
+                        AdaptiveNavigationContainer(page: .tracker) { verticalToolbarEdge in
+                            TrackerView(
+                                showTimer: Binding(get: { page != .tracker }, set: { if $0 { navigate(to: .picker) } }),
+                                stats: stats,
+                                settings: settings,
+                                usesVerticalToolbar: verticalToolbarEdge != nil
+                            )
+                        }
                     case .picker:
-                        PickerScreen(session: session, onBack: { navigate(to: .tracker) }, onOpenTimer: { navigate(to: .timer) })
+                        AdaptiveNavigationContainer(page: .picker) { verticalToolbarEdge in
+                            PickerScreen(
+                                session: session,
+                                onBack: { navigate(to: .tracker) },
+                                onOpenTimer: { navigate(to: .timer) },
+                                usesVerticalToolbar: verticalToolbarEdge != nil
+                            )
+                        }
                     case .timer:
-                        TimerScreen(session: session, settings: settings, soundManager: soundManager,
-                                    onBack: { navigate(to: .picker) })
+                        AdaptiveNavigationContainer(page: .timer) { verticalToolbarEdge in
+                            TimerScreen(
+                                session: session,
+                                settings: settings,
+                                soundManager: soundManager,
+                                onBack: { navigate(to: .picker) },
+                                usesVerticalToolbar: verticalToolbarEdge != nil,
+                                verticalToolbarEdge: verticalToolbarEdge
+                            )
+                        }
                     }
                 }
                 .id(page)

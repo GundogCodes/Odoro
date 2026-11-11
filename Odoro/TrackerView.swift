@@ -1915,7 +1915,7 @@ struct AddHabitSheet: View {
     private let icons = habitIconCatalog
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 28) {
                     // Style Preview Carousel
@@ -2341,12 +2341,16 @@ struct AddHabitSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button { dismiss() } label: {
+                        Label("Cancel", systemImage: "xmark")
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
+                    Button {
                         addHabit()
                         dismiss()
+                    } label: {
+                        Label("Add", systemImage: "checkmark")
                     }
                     .disabled(name.isEmpty)
                     .fontWeight(.semibold)
@@ -2464,7 +2468,7 @@ struct AddNoteSheet: View {
     @FocusState private var isFocused: Bool
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 // Header info
                 HStack(spacing: 12) {
@@ -2513,16 +2517,20 @@ struct AddNoteSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button {
                         dismiss()
+                    } label: {
+                        Label("Cancel", systemImage: "xmark")
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button {
                         if !noteContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             habitManager.addNote(to: habit, content: noteContent.trimmingCharacters(in: .whitespacesAndNewlines))
                         }
                         dismiss()
+                    } label: {
+                        Label("Save", systemImage: "checkmark")
                     }
                     .disabled(noteContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -2548,7 +2556,7 @@ struct NotesListSheet: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Group {
                 if currentHabit.notes.isEmpty {
                     VStack(spacing: 16) {
@@ -2599,8 +2607,10 @@ struct NotesListSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") {
+                    Button {
                         dismiss()
+                    } label: {
+                        Label("Done", systemImage: "checkmark")
                     }
                 }
                 ToolbarItem(placement: .primaryAction) {
@@ -2633,7 +2643,7 @@ struct HabitDetailSheet: View {
     @State private var showResetConfirmation = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     // Habit Preview (all visual styles)
@@ -3040,30 +3050,40 @@ struct HabitDetailSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     if isEditMode {
-                        Button("Cancel") {
+                        Button {
                             if let updated = habitManager.habits.first(where: { $0.id == habit.id }) {
                                 habit = updated
                             }
                             isEditMode = false
+                        } label: {
+                            Label("Cancel", systemImage: "xmark")
+                        }
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    if !isEditMode {
+                        Button {
+                            isEditMode = true
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
                         }
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isEditMode {
-                        Button("Save") {
+                        Button {
                             habitManager.updateHabit(habit)
                             isEditMode = false
+                        } label: {
+                            Label("Save", systemImage: "checkmark")
                         }
                         .bold()
                     } else {
-                        HStack(spacing: 12) {
-                            Button("Edit") {
-                                isEditMode = true
-                            }
-                            Button("Done") {
-                                habitManager.updateHabit(habit)
-                                dismiss()
-                            }
+                        Button {
+                            habitManager.updateHabit(habit)
+                            dismiss()
+                        } label: {
+                            Label("Done", systemImage: "checkmark")
                         }
                     }
                 }
@@ -3418,8 +3438,9 @@ struct MinimalHabitView: View {
 struct HabitsSection: View {
     @ObservedObject var habitManager: HabitManager
     @Binding var selectedHabit: Habit?
-    @State private var showAddHabit = false
-    @State private var habitsHidden = false
+    @Binding var showAddHabit: Bool
+    @Binding var habitsHidden: Bool
+    let showsHeaderControls: Bool
     
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -3433,50 +3454,42 @@ struct HabitsSection: View {
                     .modifier(ThemeHeadingStyle())
                 Spacer()
 
-                // Hide/Show toggle
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        habitsHidden.toggle()
+                if showsHeaderControls {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            habitsHidden.toggle()
+                        }
+                    } label: {
+                        Image(systemName: habitsHidden ? "eye.slash.fill" : "eye.fill")
+                            .font(.body)
+                            .foregroundColor(.white.opacity(0.7))
+                            .padding(6)
                     }
-                } label: {
-                    Image(systemName: habitsHidden ? "eye.slash.fill" : "eye.fill")
-                        .font(.body)
-                        .foregroundColor(.white.opacity(0.7))
-                        .padding(6)
-                }
 
-                Button {
-                    showAddHabit = true
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.white.opacity(0.7))
+                    Button {
+                        showAddHabit = true
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
                 }
             }
             
             if habitManager.activeHabits.isEmpty {
-                // Empty state
-                Button {
-                    showAddHabit = true
-                } label: {
-                    HStack {
-                        Image(systemName: "plus.circle.dashed")
-                            .font(.title2)
-                        VStack(alignment: .leading) {
-                            Text("Add Your First Habit")
-                                .font(.subheadline.weight(.medium))
-                            Text("Track streaks, countdowns & more")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.6))
-                        }
-                        Spacer()
+                if showsHeaderControls {
+                    Button {
+                        showAddHabit = true
+                    } label: {
+                        emptyHabitsLabel(
+                            title: "Add Your First Habit",
+                            subtitle: "Track streaks, countdowns & more"
+                        )
                     }
-                    .foregroundColor(.white)
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(style: StrokeStyle(lineWidth: 2, dash: [8]))
-                            .foregroundColor(.white.opacity(0.3))
+                } else {
+                    emptyHabitsLabel(
+                        title: "No Habits Yet",
+                        subtitle: "Use + in the side bar to add one"
                     )
                 }
             } else if habitsHidden {
@@ -3503,6 +3516,28 @@ struct HabitsSection: View {
         .sheet(isPresented: $showAddHabit) {
             AddHabitSheet(habitManager: habitManager)
         }
+    }
+
+    private func emptyHabitsLabel(title: String, subtitle: String) -> some View {
+        HStack {
+            Image(systemName: "plus.circle.dashed")
+                .font(.title2)
+            VStack(alignment: .leading) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.6))
+            }
+            Spacer()
+        }
+        .foregroundColor(.white)
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(style: StrokeStyle(lineWidth: 2, dash: [8]))
+                .foregroundColor(.white.opacity(0.3))
+        )
     }
 }
 
@@ -3719,13 +3754,17 @@ struct HabitCardContent: View {
 // MARK: - Tracker Home Screen
 struct TrackerView: View {
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Binding var showTimer: Bool
     @ObservedObject var stats: StatsManager
     @ObservedObject var settings: AppSettings
+    let usesVerticalToolbar: Bool
     @StateObject private var habitManager = HabitManager()
     
     @State private var selectedHabit: Habit?
     @State private var showCompletedGoals = false
+    @State private var showAddHabit = false
+    @State private var habitsHidden = false
     
     var body: some View {
         ZStack {
@@ -3733,91 +3772,60 @@ struct TrackerView: View {
             
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
-                    // Header with logo and title
-                    HStack(spacing: 8) {
-                        if colorScheme == .light {
-                            Image("logo4")
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 32, height: 32)
-                                .cornerRadius(8)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.white, lineWidth: 2)
-                                )
-                                .modifier(TrackerHeaderShadow())
-                                .onTapGesture {
-                                    showCompletedGoals = true
+                    trackerHeader
+
+                    if horizontalSizeClass == .regular {
+                        HStack(alignment: .top, spacing: 20) {
+                            VStack(spacing: 20) {
+                                if !usesVerticalToolbar {
+                                    lockInButton
                                 }
-                        } else {
-                            Image("logo5")
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 32, height: 32)
-                                .cornerRadius(8)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.white, lineWidth: 2)
-                                )
-                                .modifier(TrackerHeaderShadow())
-                                .onTapGesture {
-                                    showCompletedGoals = true
-                                }
-                        }
-                        
-                        Text("Tracker")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .modifier(ThemeHeadingStyle())
-                            .modifier(TrackerHeaderShadow())
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                        Spacer(minLength: 0)
-                        BackgroundThemePicker()
-                    }
-                    .padding(.top, 12)
-                    
-                    // Lock In Now button
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.35)) {
-                            showTimer = true
-                        }
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: "flame.fill")
-                                .font(.title3)
-                                .foregroundColor(.orange)
-                            Text("Lock In Now")
-                                .font(.title3.bold())
-                                .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.body.weight(.semibold))
-                                .foregroundColor(FocusSurfaceStyle.secondaryTextColor(for: colorScheme))
-                        }
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 16)
-                        .background {
-                            FocusSurfaceBackground(
-                                shape: RoundedRectangle(cornerRadius: 16, style: .continuous),
-                                role: .tracker
+                                StatsCard(stats: stats, habitManager: habitManager)
+                            }
+                            .frame(minWidth: 260, idealWidth: 280, maxWidth: 300)
+
+                            HabitsSection(
+                                habitManager: habitManager,
+                                selectedHabit: $selectedHabit,
+                                showAddHabit: $showAddHabit,
+                                habitsHidden: $habitsHidden,
+                                showsHeaderControls: !usesVerticalToolbar
                             )
+                            .frame(maxWidth: .infinity, alignment: .top)
                         }
+                    } else {
+                        if !usesVerticalToolbar {
+                            lockInButton
+                        }
+                        StatsCard(stats: stats, habitManager: habitManager)
+                        HabitsSection(
+                            habitManager: habitManager,
+                            selectedHabit: $selectedHabit,
+                            showAddHabit: $showAddHabit,
+                            habitsHidden: $habitsHidden,
+                            showsHeaderControls: !usesVerticalToolbar
+                        )
                     }
-                    
-                    // Stats Card
-                    StatsCard(stats: stats, habitManager: habitManager)
-                    
-                    // Habits Section
-                    HabitsSection(
-                        habitManager: habitManager,
-                        selectedHabit: $selectedHabit
-                    )
                     
                     Spacer(minLength: 40)
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, horizontalSizeClass == .regular ? 24 : 20)
                 .frame(maxWidth: 820)
                 .frame(maxWidth: .infinity)
+            }
+
+            if usesVerticalToolbar {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        trackerDuoRail
+                    }
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 18)
+                }
+                .ignoresSafeArea(.container, edges: .horizontal)
+                .zIndex(20)
             }
         }
         .gesture(
@@ -3834,11 +3842,111 @@ struct TrackerView: View {
             HabitDetailSheet(habitManager: habitManager, habit: habit)
         }
         .fullScreenCover(isPresented: $showCompletedGoals) {
-            CompletedGoalsView(habitManager: habitManager, isPresented: $showCompletedGoals)
+            CompletedGoalsView(
+                habitManager: habitManager,
+                isPresented: $showCompletedGoals,
+                usesVerticalToolbar: usesVerticalToolbar
+            )
         }
         .onAppear {
             // Check for any habits that have reached their goals
             habitManager.checkAndSendGoalNotifications()
+        }
+    }
+
+    private var trackerHeader: some View {
+        HStack(spacing: 8) {
+            Image(colorScheme == .light ? "logo4" : "logo5")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 32, height: 32)
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white, lineWidth: 2)
+                )
+                .modifier(TrackerHeaderShadow())
+                .onTapGesture {
+                    showCompletedGoals = true
+                }
+
+            Text("Tracker")
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .modifier(ThemeHeadingStyle())
+                .modifier(TrackerHeaderShadow())
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Spacer(minLength: 0)
+            if !usesVerticalToolbar {
+                BackgroundThemePicker()
+            }
+        }
+        .padding(.top, 12)
+    }
+
+    private var lockInButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                showTimer = true
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "flame.fill")
+                    .font(.title3)
+                    .foregroundColor(.orange)
+                Text("Lock In Now")
+                    .font(.title3.bold())
+                    .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.body.weight(.semibold))
+                    .foregroundColor(FocusSurfaceStyle.secondaryTextColor(for: colorScheme))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .background {
+                FocusSurfaceBackground(
+                    shape: RoundedRectangle(cornerRadius: 16, style: .continuous),
+                    role: .tracker
+                )
+            }
+        }
+    }
+
+    private var trackerDuoRail: some View {
+        DuoControlRail(axis: .vertical) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.35)) { showTimer = true }
+            } label: {
+                Image(systemName: "flame.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Lock In")
+
+            Button { showAddHabit = true } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 21, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Add Habit")
+
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    habitsHidden.toggle()
+                }
+            } label: {
+                Image(systemName: habitsHidden ? "eye.slash.fill" : "eye.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel(habitsHidden ? "Show Habits" : "Hide Habits")
+
+            BackgroundThemePicker(usesRailIcon: true)
+                .frame(width: 44, height: 44)
         }
     }
 }
@@ -3938,84 +4046,106 @@ struct StatItem: View {
 struct CompletedGoalsView: View {
     @ObservedObject var habitManager: HabitManager
     @Binding var isPresented: Bool
+    let usesVerticalToolbar: Bool
     @State private var selectedCompletedHabit: Habit?
     @State private var showContent = false
     
     var body: some View {
-        ZStack {
-            // Same background as TrackerView
-            TrackerBackground()
+        NavigationStack {
+            ZStack {
+                // Same background as TrackerView
+                TrackerBackground()
             
-            VStack(spacing: 0) {
-                // Header
-                HStack {
-                    Button {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            showContent = false
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                            isPresented = false
-                        }
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(.white.opacity(0.7))
-                    }
-                    
-                    Spacer()
-                    
-                    Text("Completed Goals")
-                        .font(.title2.weight(.bold))
-                        .foregroundColor(.white)
-                    
-                    Spacer()
-                    
-                    // Invisible spacer for balance
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.clear)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 60)
-                .padding(.bottom, 20)
-                
-                if habitManager.completedHabits.isEmpty {
-                    // Empty state
-                    Spacer()
-                    VStack(spacing: 16) {
-                        Image(systemName: "trophy")
-                            .font(.system(size: 60))
-                            .foregroundColor(.yellow.opacity(0.5))
-                        
-                        Text("No Completed Goals Yet")
-                            .font(.title3.weight(.semibold))
-                            .foregroundColor(.white)
-                        
-                        Text("Complete your habits to see them here!")
-                            .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.6))
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
-                    .opacity(showContent ? 1 : 0)
-                    .offset(y: showContent ? 0 : 20)
-                    Spacer()
-                } else {
-                    // Completed habits list
-                    ScrollView(showsIndicators: false) {
-                        LazyVStack(spacing: 12) {
-                            ForEach(habitManager.completedHabits) { habit in
-                                CompletedHabitCard(habit: habit)
-                                    .onTapGesture {
-                                        selectedCompletedHabit = habit
-                                    }
-                                    .opacity(showContent ? 1 : 0)
-                                    .offset(y: showContent ? 0 : 20)
+                VStack(spacing: 0) {
+                    // Header
+                    HStack {
+                        if !usesVerticalToolbar {
+                            Button(action: close) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.title2)
+                                    .foregroundColor(.white.opacity(0.7))
                             }
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 40)
+                    
+                        Spacer()
+                    
+                        Text("Completed Goals")
+                            .font(.title2.weight(.bold))
+                            .foregroundColor(.white)
+                    
+                        Spacer()
+                    
+                        if !usesVerticalToolbar {
+                            // Invisible spacer for balance
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title2)
+                                .foregroundColor(.clear)
+                        }
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, usesVerticalToolbar ? 24 : 60)
+                    .padding(.bottom, 20)
+                
+                    if habitManager.completedHabits.isEmpty {
+                        // Empty state
+                        Spacer()
+                        VStack(spacing: 16) {
+                            Image(systemName: "trophy")
+                                .font(.system(size: 60))
+                                .foregroundColor(.yellow.opacity(0.5))
+                        
+                            Text("No Completed Goals Yet")
+                                .font(.title3.weight(.semibold))
+                                .foregroundColor(.white)
+                        
+                            Text("Complete your habits to see them here!")
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.6))
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding()
+                        .opacity(showContent ? 1 : 0)
+                        .offset(y: showContent ? 0 : 20)
+                        Spacer()
+                    } else {
+                        // Completed habits list
+                        ScrollView(showsIndicators: false) {
+                            LazyVStack(spacing: 12) {
+                                ForEach(habitManager.completedHabits) { habit in
+                                    CompletedHabitCard(habit: habit)
+                                        .onTapGesture {
+                                            selectedCompletedHabit = habit
+                                        }
+                                        .opacity(showContent ? 1 : 0)
+                                        .offset(y: showContent ? 0 : 20)
+                                }
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 40)
+                        }
+                    }
+                }
+
+                if usesVerticalToolbar {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            DuoControlRail(axis: .vertical) {
+                                Button(action: close) {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .frame(width: 44, height: 44)
+                                }
+                                .accessibilityLabel("Close Completed Goals")
+                            }
+                        }
+                        .padding(.trailing, 10)
+                        .padding(.bottom, 18)
+                    }
+                    .ignoresSafeArea(.container, edges: .horizontal)
+                    .zIndex(20)
                 }
             }
         }
@@ -4028,6 +4158,15 @@ struct CompletedGoalsView: View {
                     showContent = true
                 }
             }
+        }
+    }
+
+    private func close() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            showContent = false
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            isPresented = false
         }
     }
 }
@@ -4097,7 +4236,7 @@ struct CompletedHabitDetailSheet: View {
     @State var habit: Habit
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     // Completion Badge
@@ -4221,8 +4360,10 @@ struct CompletedHabitDetailSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
+                    Button {
                         dismiss()
+                    } label: {
+                        Label("Done", systemImage: "checkmark")
                     }
                 }
             }
@@ -4231,5 +4372,10 @@ struct CompletedHabitDetailSheet: View {
 }
 
 #Preview {
-    TrackerView(showTimer: .constant(false), stats: StatsManager(), settings: AppSettings())
+    TrackerView(
+        showTimer: .constant(false),
+        stats: StatsManager(),
+        settings: AppSettings(),
+        usesVerticalToolbar: false
+    )
 }

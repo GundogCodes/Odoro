@@ -71,6 +71,7 @@ enum BackgroundTheme: String, CaseIterable, Identifiable {
 }
 
 struct BackgroundThemePicker: View {
+    var usesRailIcon = false
     @AppStorage(BackgroundTheme.storageKey) private var selectedTheme = BackgroundTheme.violet.rawValue
 
     private var currentTheme: BackgroundTheme {
@@ -90,15 +91,39 @@ struct BackgroundThemePicker: View {
                 }
             }
         } label: {
-            ThemeButtonSwatch(theme: currentTheme)
-                .frame(width: 34, height: 36)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
+            Group {
+                if usesRailIcon {
+                    ThemeRailSwatch(theme: currentTheme)
+                        .frame(width: 22, height: 22)
+                } else {
+                    ThemeButtonSwatch(theme: currentTheme)
+                        .frame(width: 34, height: 36)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
         .menuIndicator(.hidden)
         .buttonStyle(ThemeButtonStyle())
         .accessibilityLabel("Theme: \(currentTheme.title)")
         .accessibilityHint("Opens the background theme menu")
+    }
+}
+
+private struct ThemeRailSwatch: View {
+    let theme: BackgroundTheme
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let palette = theme.trackerPalette(for: colorScheme)
+        let shape = Circle()
+
+        ZStack {
+            shape.fill(palette.middle)
+            ThemeButtonWave()
+                .fill(palette.front)
+                .clipShape(shape)
+        }
     }
 }
 
