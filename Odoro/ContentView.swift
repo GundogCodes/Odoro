@@ -1131,24 +1131,13 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
 struct DraggableCameraPreview: View {
     @ObservedObject var cameraManager: CameraManager
     @Binding var isHidden: Bool
+    let containerSize: CGSize
     @State private var position: CGPoint = CGPoint(x: 80, y: 150)
     @State private var dragOffset: CGSize = .zero
     @State private var recordingDuration: Int = 0
     @State private var recordingTimer: Timer?
-    @State private var deviceOrientation: UIDeviceOrientation = UIDevice.current.orientation
-    
-    @Environment(\.verticalSizeClass) var verticalSizeClass
-    
-    var isLandscape: Bool { verticalSizeClass == .compact }
-    
-    var rotationAngle: Double {
-        if !isLandscape { return 0 }
-        switch deviceOrientation {
-        case .landscapeLeft: return -90
-        case .landscapeRight: return 90
-        default: return -90
-        }
-    }
+
+    private let previewSize = CGSize(width: 146, height: 186)
     
     var body: some View {
         ZStack {
@@ -1168,7 +1157,6 @@ struct DraggableCameraPreview: View {
                             .resizable()
                             .scaledToFill()
                             .frame(width: 130, height: 170)
-                            .rotationEffect(.degrees(rotationAngle))
                             .clipped()
                     } else {
                         Rectangle()
@@ -1238,27 +1226,28 @@ struct DraggableCameraPreview: View {
             }
         }
         .frame(width: 146, height: 186)
-        .position(x: position.x + dragOffset.width, y: position.y + dragOffset.height)
+        .position(clampedPosition(CGPoint(
+            x: position.x + dragOffset.width,
+            y: position.y + dragOffset.height
+        )))
         .gesture(
             DragGesture()
                 .onChanged { value in dragOffset = value.translation }
                 .onEnded { value in
-                    position.x += value.translation.width
-                    position.y += value.translation.height
+                    position = clampedPosition(CGPoint(
+                        x: position.x + value.translation.width,
+                        y: position.y + value.translation.height
+                    ))
                     dragOffset = .zero
                 }
         )
         .onAppear {
             startRecordingTimer()
-            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
-            deviceOrientation = UIDevice.current.orientation
+            position = clampedPosition(position)
         }
         .onDisappear { recordingTimer?.invalidate() }
-        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-            let newOrientation = UIDevice.current.orientation
-            if newOrientation.isLandscape || newOrientation.isPortrait {
-                deviceOrientation = newOrientation
-            }
+        .onChange(of: containerSize) { _, _ in
+            position = clampedPosition(position)
         }
         .onChange(of: cameraManager.isRecording) { _, isRecording in
             if isRecording {
@@ -1275,6 +1264,18 @@ struct DraggableCameraPreview: View {
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             if cameraManager.isRecording { recordingDuration += 1 }
         }
+    }
+
+    private func clampedPosition(_ proposed: CGPoint) -> CGPoint {
+        let horizontalInset = previewSize.width / 2 + 12
+        let verticalInset = previewSize.height / 2 + 12
+        let maximumX = max(horizontalInset, containerSize.width - horizontalInset)
+        let maximumY = max(verticalInset, containerSize.height - verticalInset)
+
+        return CGPoint(
+            x: min(max(proposed.x, horizontalInset), maximumX),
+            y: min(max(proposed.y, verticalInset), maximumY)
+        )
     }
     
     private func formatDuration(_ seconds: Int) -> String {
@@ -1726,12 +1727,11 @@ struct PickerScreen: View {
     let onOpenTimer: () -> Void
     @Environment(\.colorScheme) var colorScheme
 
-    
-    @Environment(\.verticalSizeClass) var verticalSizeClass
-    var isLandscape: Bool { verticalSizeClass == .compact }
-    
     var body: some View {
         GeometryReader { geo in
+            let isCompactHeight = geo.size.height < 600
+            let pickerHeight = min(max(220, geo.size.height * (isCompactHeight ? 0.52 : 0.58)), 520)
+
             ZStack {
                 AnimatedMeshBackground()
                 
@@ -1782,12 +1782,12 @@ struct PickerScreen: View {
                         HStack(spacing: 12) {
                             ModernPickerCard(
                                 selection: $session.studyTime,
-                                height: isLandscape ? geo.size.height * 0.6 : geo.size.height * 0.65
+                                height: pickerHeight
                             )
                             
                             ModernPickerCard(
                                 selection: $session.restTime,
-                                height: isLandscape ? geo.size.height * 0.6 : geo.size.height * 0.65
+                                height: pickerHeight
                             )
                         }
                         .padding(.horizontal, 16)
@@ -1811,6 +1811,8 @@ struct PickerScreen: View {
                     
                     Spacer()
                 }
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
                 
                 // Back button
                 VStack {
@@ -1868,6 +1870,7 @@ enum DetentTick {
 struct ModernPickerCard: View {
     @Binding var selection: Int
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.displayScale) private var displayScale
     
     @State private var isUserScrolling = false
     @State private var lastTickTime: CFTimeInterval = 0
@@ -1879,8 +1882,7 @@ struct ModernPickerCard: View {
     private let itemHeight: CGFloat = 50
 
     private func pixelAlign(_ value: CGFloat) -> CGFloat {
-        let scale = UIScreen.main.scale
-        return (value * scale).rounded() / scale
+        (value * displayScale).rounded() / displayScale
     }
 
     var body: some View {
@@ -2074,8 +2076,6 @@ struct TimerScreen: View {
     @ObservedObject var soundManager: FocusSoundManager
     let onBack: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.verticalSizeClass) var verticalSizeClass
-    var isLandscape: Bool { verticalSizeClass == .compact }
     @StateObject private var cameraManager = CameraManager()
     @StateObject private var motionManager = MotionManager()
     @State private var showCameraPreview = false
@@ -2106,6 +2106,9 @@ struct TimerScreen: View {
     
     var body: some View {
         GeometryReader { geo in
+            let isCompactHeight = geo.size.height < 500
+            let timerFontSize = min(batterySaverMode ? 90 : 70, max(48, geo.size.width * 0.18))
+
             ZStack {
                 if batterySaverMode {
                     Color.black.ignoresSafeArea()
@@ -2121,7 +2124,7 @@ struct TimerScreen: View {
                     FluidFillView(progress: progress, gradient: session.isStudy ? studyGradient : restGradient, motionManager: motionManager, isAnimating: session.timerRunning)
                 }
                 
-                VStack(spacing: 30) {
+                VStack(spacing: isCompactHeight ? 14 : 30) {
                     if !batterySaverMode {
                         VStack(spacing: 8) {
                             Text(session.isStudy ? "Lock In Time" : (session.isLongBreak ? "Long Chill" : "Chill Time"))
@@ -2134,7 +2137,7 @@ struct TimerScreen: View {
                     }
                     
                     Text(timeString(from: session.secondsLeft))
-                        .font(.system(size: batterySaverMode ? 90 : 70, weight: .bold, design: .monospaced))
+                        .font(.system(size: timerFontSize, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
 
                     if showUI && !batterySaverMode {
@@ -2192,16 +2195,22 @@ struct TimerScreen: View {
                         .transition(.opacity)
                     }
                 }
+                .frame(maxWidth: 680)
+                .padding(.horizontal, 20)
                 
                 if showCameraPreview && !cameraPreviewHidden && !batterySaverMode {
-                    DraggableCameraPreview(cameraManager: cameraManager, isHidden: $cameraPreviewHidden)
+                    DraggableCameraPreview(
+                        cameraManager: cameraManager,
+                        isHidden: $cameraPreviewHidden,
+                        containerSize: geo.size
+                    )
                 }
                 
                 if showUI {
                     HStack {
                         Spacer()
                         VStack {
-                            if !isLandscape { Spacer().frame(height: 8) } else { Spacer() }
+                            if isCompactHeight { Spacer() } else { Spacer().frame(height: 8) }
                             
                             VStack(spacing: 12) {
                                 Button {
@@ -2265,7 +2274,7 @@ struct TimerScreen: View {
                                 }
                             }
                             
-                            if isLandscape { Spacer() } else { Spacer() }
+                            Spacer()
                         }
                         .padding(.trailing, 20)
                     }
@@ -2435,10 +2444,6 @@ struct ContentView: View {
             requestNotificationPermission()
             settings.applyTheme(BackgroundTheme(rawValue: selectedTheme) ?? .violet, scheme: colorScheme)
             if !session.hasSession { LiveActivityManager.shared.cleanupOrphanedActivities() }
-        }
-        .onChange(of: page) { _, destination in
-            if destination == .tracker { OrientationManager.shared.lockToPortrait() }
-            else { OrientationManager.shared.unlock() }
         }
         .onChange(of: selectedTheme) { _, value in
             settings.applyTheme(BackgroundTheme(rawValue: value) ?? .violet, scheme: colorScheme)

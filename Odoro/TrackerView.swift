@@ -988,45 +988,6 @@ struct TrackerBackground: View {
     }
 }
 
-// MARK: - Orientation Manager
-class OrientationManager: ObservableObject {
-    static let shared = OrientationManager()
-    @Published var isLocked = false
-    
-    func lockToPortrait() {
-        guard !isLocked else { return }
-        isLocked = true
-        forceOrientationUpdate()
-    }
-    
-    func unlock() {
-        guard isLocked else { return }
-        isLocked = false
-        forceOrientationUpdate()
-    }
-    
-    private func forceOrientationUpdate() {
-        DispatchQueue.main.async {
-            if #available(iOS 16.0, *) {
-                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
-                let orientations: UIInterfaceOrientationMask = self.isLocked ? .portrait : .all
-                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: orientations)) { error in }
-            }
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootVC = windowScene.windows.first?.rootViewController {
-                rootVC.setNeedsUpdateOfSupportedInterfaceOrientations()
-            }
-        }
-    }
-}
-
-// MARK: - App Delegate for Orientation Control
-class AppDelegate: NSObject, UIApplicationDelegate {
-    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        return OrientationManager.shared.isLocked ? .portrait : .all
-    }
-}
-
 // MARK: - Progress Grid View (fills from top-left to right, like reading)
 struct ContributionGridView: View {
     let habit: Habit
@@ -3763,8 +3724,6 @@ struct TrackerView: View {
     @ObservedObject var settings: AppSettings
     @StateObject private var habitManager = HabitManager()
     
-    private var orientationManager: OrientationManager { OrientationManager.shared }
-    
     @State private var selectedHabit: Habit?
     @State private var showCompletedGoals = false
     
@@ -3815,7 +3774,7 @@ struct TrackerView: View {
                         Spacer(minLength: 0)
                         BackgroundThemePicker()
                     }
-                    .padding(.top, 60)
+                    .padding(.top, 12)
                     
                     // Lock In Now button
                     Button {
@@ -3857,6 +3816,8 @@ struct TrackerView: View {
                     Spacer(minLength: 40)
                 }
                 .padding(.horizontal, 20)
+                .frame(maxWidth: 820)
+                .frame(maxWidth: .infinity)
             }
         }
         .gesture(
@@ -3876,8 +3837,6 @@ struct TrackerView: View {
             CompletedGoalsView(habitManager: habitManager, isPresented: $showCompletedGoals)
         }
         .onAppear {
-            orientationManager.lockToPortrait()
-            
             // Check for any habits that have reached their goals
             habitManager.checkAndSendGoalNotifications()
         }
