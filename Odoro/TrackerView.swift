@@ -889,7 +889,11 @@ struct TrackerBackground: View {
     @AppStorage(BackgroundTheme.storageKey) private var selectedTheme = BackgroundTheme.violet.rawValue
 
     private var palette: WavePalette {
-        (BackgroundTheme(rawValue: selectedTheme) ?? .violet).trackerPalette(for: colorScheme)
+        currentTheme.trackerPalette(for: colorScheme)
+    }
+
+    private var currentTheme: BackgroundTheme {
+        BackgroundTheme(rawValue: selectedTheme) ?? .violet
     }
     
     @State private var wave1FromTop: Bool = false
@@ -902,7 +906,7 @@ struct TrackerBackground: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1/20)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
-            
+
             GeometryReader { geo in
                 ZStack {
                     if colorScheme == .dark {
@@ -3759,75 +3763,47 @@ struct TrackerView: View {
     @ObservedObject var stats: StatsManager
     @ObservedObject var settings: AppSettings
     let usesVerticalToolbar: Bool
+    let isBookMode: Bool
+    let isFullyOpenDuo: Bool
     @StateObject private var habitManager = HabitManager()
     
     @State private var selectedHabit: Habit?
+    @State private var selectedCompletedHabit: Habit?
     @State private var showCompletedGoals = false
     @State private var showAddHabit = false
     @State private var habitsHidden = false
+
+    private var usesExpandedLayout: Bool {
+        horizontalSizeClass == .regular || isBookMode || isFullyOpenDuo
+    }
+
+    private var usesAdaptiveRail: Bool {
+        usesVerticalToolbar || usesExpandedLayout
+    }
     
     var body: some View {
-        ZStack {
-            TrackerBackground()
-            
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
-                    trackerHeader
+        GeometryReader { geo in
+            let isLandscape = geo.size.width > geo.size.height
 
-                    if horizontalSizeClass == .regular {
-                        HStack(alignment: .top, spacing: 20) {
-                            VStack(spacing: 20) {
-                                if !usesVerticalToolbar {
-                                    lockInButton
-                                }
-                                StatsCard(stats: stats, habitManager: habitManager)
-                            }
-                            .frame(minWidth: 260, idealWidth: 280, maxWidth: 300)
+            ZStack {
+                TrackerBackground()
 
-                            HabitsSection(
-                                habitManager: habitManager,
-                                selectedHabit: $selectedHabit,
-                                showAddHabit: $showAddHabit,
-                                habitsHidden: $habitsHidden,
-                                showsHeaderControls: !usesVerticalToolbar
-                            )
-                            .frame(maxWidth: .infinity, alignment: .top)
-                        }
-                    } else {
-                        if !usesVerticalToolbar {
-                            lockInButton
-                        }
-                        StatsCard(stats: stats, habitManager: habitManager)
-                        HabitsSection(
-                            habitManager: habitManager,
-                            selectedHabit: $selectedHabit,
-                            showAddHabit: $showAddHabit,
-                            habitsHidden: $habitsHidden,
-                            showsHeaderControls: !usesVerticalToolbar
-                        )
-                    }
-                    
-                    Spacer(minLength: 40)
+                if usesExpandedLayout {
+                    expandedTrackerLayout(containerSize: geo.size)
+                } else {
+                    compactTrackerLayout
                 }
-                .padding(.horizontal, horizontalSizeClass == .regular ? 24 : 20)
-                .frame(maxWidth: 820)
-                .frame(maxWidth: .infinity)
-            }
 
-            if usesVerticalToolbar {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        trackerDuoRail
-                    }
-                    .padding(.trailing, 10)
-                    .padding(.bottom, 18)
+                if usesAdaptiveRail {
+                    trackerRailOverlay(isLandscape: isLandscape)
+                        .ignoresSafeArea(.container, edges: .horizontal)
+                        .zIndex(20)
                 }
-                .ignoresSafeArea(.container, edges: .horizontal)
-                .zIndex(20)
             }
         }
+        .modifier(
+            DuoFullWidthModifier(enabled: usesVerticalToolbar && usesExpandedLayout)
+        )
         .gesture(
             DragGesture(minimumDistance: 50)
                 .onEnded { value in
@@ -3841,16 +3817,174 @@ struct TrackerView: View {
         .sheet(item: $selectedHabit) { habit in
             HabitDetailSheet(habitManager: habitManager, habit: habit)
         }
+        .sheet(item: $selectedCompletedHabit) { habit in
+            CompletedHabitDetailSheet(habitManager: habitManager, habit: habit)
+        }
         .fullScreenCover(isPresented: $showCompletedGoals) {
             CompletedGoalsView(
                 habitManager: habitManager,
                 isPresented: $showCompletedGoals,
-                usesVerticalToolbar: usesVerticalToolbar
+                usesVerticalToolbar: usesAdaptiveRail
             )
         }
         .onAppear {
             // Check for any habits that have reached their goals
             habitManager.checkAndSendGoalNotifications()
+        }
+    }
+
+    private var compactTrackerLayout: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 20) {
+                trackerHeader
+
+                if !usesAdaptiveRail {
+                    lockInButton
+                }
+
+                StatsCard(stats: stats, habitManager: habitManager)
+                HabitsSection(
+                    habitManager: habitManager,
+                    selectedHabit: $selectedHabit,
+                    showAddHabit: $showAddHabit,
+                    habitsHidden: $habitsHidden,
+                    showsHeaderControls: !usesAdaptiveRail
+                )
+
+                Spacer(minLength: 40)
+            }
+            .padding(.horizontal, 20)
+            .frame(maxWidth: 820)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func expandedTrackerLayout(containerSize: CGSize) -> some View {
+        let isLandscape = containerSize.width > containerSize.height
+        let usesBookLandscapeLayout = isBookMode && isLandscape
+
+        return Group {
+            if usesBookLandscapeLayout {
+                HStack(alignment: .top, spacing: 0) {
+                    expandedTrackerLeftColumn
+                        .padding(.leading, 62)
+                        .padding(.trailing, 50)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+                    expandedActiveHabitsColumn
+                        .padding(.leading, 18)
+                        .padding(.trailing, 94)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(.bottom, 18)
+            } else {
+                HStack(alignment: .top, spacing: 24) {
+                    expandedTrackerLeftColumn
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+                    expandedActiveHabitsColumn
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(.leading, 28)
+                .padding(.trailing, isLandscape ? 94 : 28)
+                .padding(.bottom, isLandscape ? 18 : 94)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var expandedTrackerLeftColumn: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            trackerHeader
+            StatsCard(stats: stats, habitManager: habitManager)
+            completedHabitsPanel(bottomInset: 4)
+        }
+    }
+
+    private var expandedActiveHabitsColumn: some View {
+        ScrollView(showsIndicators: false) {
+            HabitsSection(
+                habitManager: habitManager,
+                selectedHabit: $selectedHabit,
+                showAddHabit: $showAddHabit,
+                habitsHidden: $habitsHidden,
+                showsHeaderControls: false
+            )
+            .padding(.top, 18)
+            .padding(.bottom, 100)
+        }
+    }
+
+    private func completedHabitsPanel(bottomInset: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "trophy.fill")
+                    .foregroundStyle(.yellow)
+                Text("Completed Habits")
+                    .font(.headline)
+                    .foregroundStyle(FocusSurfaceStyle.textColor(for: colorScheme))
+                Spacer()
+                Text("\(habitManager.completedHabits.count)")
+                    .font(.caption.bold())
+                    .foregroundStyle(FocusSurfaceStyle.secondaryTextColor(for: colorScheme))
+            }
+
+            if habitManager.completedHabits.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "trophy")
+                        .font(.title2)
+                        .foregroundStyle(.yellow.opacity(0.55))
+                    Text("Completed habits will appear here")
+                        .font(.subheadline)
+                        .foregroundStyle(FocusSurfaceStyle.secondaryTextColor(for: colorScheme))
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.vertical, 20)
+            } else {
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 10) {
+                        ForEach(habitManager.completedHabits) { habit in
+                            CompletedHabitCard(habit: habit)
+                                .onTapGesture { selectedCompletedHabit = habit }
+                        }
+                    }
+                    .padding(.bottom, bottomInset)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background {
+            FocusSurfaceBackground(
+                shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
+                role: .tracker
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func trackerRailOverlay(isLandscape: Bool) -> some View {
+        if usesExpandedLayout && !isLandscape {
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    trackerDuoRail(axis: .horizontal)
+                    Spacer()
+                }
+            }
+            .padding(.bottom, 18)
+        } else {
+            HStack {
+                Spacer()
+                VStack {
+                    Spacer()
+                    trackerDuoRail(axis: .vertical)
+                }
+                .padding(.trailing, usesExpandedLayout ? 18 : 10)
+                .padding(.bottom, 18)
+            }
         }
     }
 
@@ -3877,7 +4011,7 @@ struct TrackerView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
             Spacer(minLength: 0)
-            if !usesVerticalToolbar {
+            if !usesAdaptiveRail {
                 BackgroundThemePicker()
             }
         }
@@ -3913,8 +4047,8 @@ struct TrackerView: View {
         }
     }
 
-    private var trackerDuoRail: some View {
-        DuoControlRail(axis: .vertical) {
+    private func trackerDuoRail(axis: DuoControlRailAxis) -> some View {
+        DuoControlRail(axis: axis) {
             Button {
                 withAnimation(.easeInOut(duration: 0.35)) { showTimer = true }
             } label: {
@@ -4376,6 +4510,8 @@ struct CompletedHabitDetailSheet: View {
         showTimer: .constant(false),
         stats: StatsManager(),
         settings: AppSettings(),
-        usesVerticalToolbar: false
+        usesVerticalToolbar: false,
+        isBookMode: false,
+        isFullyOpenDuo: false
     )
 }

@@ -737,6 +737,7 @@ class LiveActivityManager: ObservableObject {
 // MARK: - Camera Manager for Timelapse
 class CameraManager: NSObject, ObservableObject {
     @Published var isRecording = false
+    @Published private(set) var isFinalizingRecording = false
     @Published var previewImage: UIImage?
     
     private var captureSession: AVCaptureSession?
@@ -959,15 +960,77 @@ class CameraManager: NSObject, ObservableObject {
                   self.isWriterReady,
                   let writerInput = self.assetWriterInput,
                   let adaptor = self.pixelBufferAdaptor,
+                  let targetSize = self.videoSize,
                   writerInput.isReadyForMoreMediaData else { return }
+
+            let sourceSize = CGSize(
+                width: CVPixelBufferGetWidth(pixelBuffer),
+                height: CVPixelBufferGetHeight(pixelBuffer)
+            )
+            let bufferToAppend: CVPixelBuffer
+            if sourceSize == targetSize {
+                bufferToAppend = pixelBuffer
+            } else {
+                guard let normalizedBuffer = self.normalizedPixelBuffer(
+                    pixelBuffer,
+                    to: targetSize,
+                    pool: adaptor.pixelBufferPool
+                ) else { return }
+                bufferToAppend = normalizedBuffer
+            }
             
             let frameDuration = CMTime(value: 1, timescale: 30)
             let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(self.frameCount))
             
-            if adaptor.append(pixelBuffer, withPresentationTime: presentationTime) {
+            if adaptor.append(bufferToAppend, withPresentationTime: presentationTime) {
                 self.frameCount += 1
             }
         }
+    }
+
+    private func normalizedPixelBuffer(
+        _ sourceBuffer: CVPixelBuffer,
+        to targetSize: CGSize,
+        pool: CVPixelBufferPool?
+    ) -> CVPixelBuffer? {
+        var destinationBuffer: CVPixelBuffer?
+        if let pool {
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &destinationBuffer)
+        } else {
+            CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                Int(targetSize.width),
+                Int(targetSize.height),
+                kCVPixelFormatType_32BGRA,
+                [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary,
+                &destinationBuffer
+            )
+        }
+        guard let destinationBuffer else { return nil }
+
+        let targetRect = CGRect(origin: .zero, size: targetSize)
+        let sourceImage = CIImage(cvPixelBuffer: sourceBuffer)
+        let scale = min(
+            targetSize.width / sourceImage.extent.width,
+            targetSize.height / sourceImage.extent.height
+        )
+        let scaledImage = sourceImage.transformed(
+            by: CGAffineTransform(scaleX: scale, y: scale)
+        )
+        let translation = CGAffineTransform(
+            translationX: targetRect.midX - scaledImage.extent.midX,
+            y: targetRect.midY - scaledImage.extent.midY
+        )
+        let fittedImage = scaledImage.transformed(by: translation)
+        let background = CIImage(color: .black).cropped(to: targetRect)
+
+        ciContext.render(
+            fittedImage.composited(over: background),
+            to: destinationBuffer,
+            bounds: targetRect,
+            colorSpace: CGColorSpaceCreateDeviceRGB()
+        )
+        return destinationBuffer
     }
     
     func stopRecording() {
@@ -975,6 +1038,7 @@ class CameraManager: NSObject, ObservableObject {
         
         DispatchQueue.main.async {
             self.isRecording = false
+            self.isFinalizingRecording = true
         }
         
         captureTimer?.invalidate()
@@ -987,6 +1051,7 @@ class CameraManager: NSObject, ObservableObject {
                   let input = self.assetWriterInput,
                   self.frameCount > 0 else {
                 DispatchQueue.main.async {
+                    self.isFinalizingRecording = false
                     self.onTimelapseComplete?(nil)
                 }
                 return
@@ -1001,6 +1066,7 @@ class CameraManager: NSObject, ObservableObject {
                     self.saveToPhotoLibrary(url: url)
                 } else {
                     DispatchQueue.main.async {
+                        self.isFinalizingRecording = false
                         self.onTimelapseComplete?(nil)
                     }
                 }
@@ -1016,7 +1082,10 @@ class CameraManager: NSObject, ObservableObject {
     private func saveToPhotoLibrary(url: URL) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized else {
-                DispatchQueue.main.async { self.onTimelapseComplete?(nil) }
+                DispatchQueue.main.async {
+                    self.isFinalizingRecording = false
+                    self.onTimelapseComplete?(nil)
+                }
                 return
             }
             
@@ -1024,6 +1093,7 @@ class CameraManager: NSObject, ObservableObject {
                 PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
             } completionHandler: { success, _ in
                 DispatchQueue.main.async {
+                    self.isFinalizingRecording = false
                     self.onTimelapseComplete?(success ? url : nil)
                 }
             }
@@ -1039,10 +1109,12 @@ class CameraManager: NSObject, ObservableObject {
         
         DispatchQueue.main.async {
             self.isRecording = false
+            self.isFinalizingRecording = false
             self.previewImage = nil
             self.recordingStartTime = nil
             self.currentInterval = 1.0
             self.previewFrameCounter = 0
+            self.onTimelapseComplete = nil
         }
         
         sessionQueue.sync { [weak self] in
@@ -1124,7 +1196,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
                     var copiedBuffer: CVPixelBuffer?
                     let width = CVPixelBufferGetWidth(pixelBuffer)
                     let height = CVPixelBufferGetHeight(pixelBuffer)
-                    
+
                     CVPixelBufferCreate(kCFAllocatorDefault, width, height,
                                        CVPixelBufferGetPixelFormatType(pixelBuffer),
                                        nil, &copiedBuffer)
@@ -1373,16 +1445,12 @@ struct DuoControlRail<Content: View>: View {
         }
         .padding(7)
         .background {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color.white.opacity(0.06))
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .stroke(.white.opacity(0.24), lineWidth: 1)
-                }
+            let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+            ZStack {
+                shape.fill(.ultraThinMaterial)
+                shape.fill(Color.white.opacity(0.06))
+                shape.stroke(.white.opacity(0.24), lineWidth: 1)
+            }
         }
         .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 5)
     }
@@ -1393,19 +1461,20 @@ struct SettingsPanel: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var soundManager: FocusSoundManager
     @Binding var isPresented: Bool
-    let usesVerticalToolbar: Bool
+    let usesFullScreenLayout: Bool
+    let showsInternalCloseButton: Bool
     @State private var currentTip: String = StudyTips.randomTip()
     @State private var selectedTab = 0
     
     var body: some View {
-        let panelCornerRadius: CGFloat = usesVerticalToolbar ? 0 : 28
+        let panelCornerRadius: CGFloat = usesFullScreenLayout ? 0 : 28
 
         ZStack {
             VStack(spacing: 0) {
                 HStack {
                     Text("Settings").font(.title2.bold()).foregroundColor(.white)
                     Spacer()
-                    if !usesVerticalToolbar {
+                    if showsInternalCloseButton {
                         Button {
                             withAnimation(.spring(response: 0.4)) { isPresented = false }
                         } label: {
@@ -1414,7 +1483,7 @@ struct SettingsPanel: View {
                     }
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, usesVerticalToolbar ? 18 : 24)
+                .padding(.top, usesFullScreenLayout ? 18 : 24)
                 .padding(.bottom, 16)
                 
                 Picker("", selection: $selectedTab) {
@@ -1434,15 +1503,17 @@ struct SettingsPanel: View {
                     .padding(.horizontal, 24).padding(.bottom, 24)
                 }
             }
-            .padding(.trailing, usesVerticalToolbar ? 64 : 0)
+            .padding(.trailing, usesFullScreenLayout ? 64 : 0)
             .frame(
-                maxWidth: usesVerticalToolbar ? .infinity : 380,
-                maxHeight: usesVerticalToolbar ? .infinity : 520
+                maxWidth: usesFullScreenLayout ? .infinity : 420,
+                maxHeight: usesFullScreenLayout ? .infinity : 560
             )
             .background(
                 ZStack {
                     RoundedRectangle(cornerRadius: panelCornerRadius).fill(.ultraThinMaterial)
-                    RoundedRectangle(cornerRadius: panelCornerRadius).fill(Color.black.opacity(0.35))
+                    RoundedRectangle(cornerRadius: panelCornerRadius).fill(
+                        Color.black.opacity(0.35)
+                    )
                     RoundedRectangle(cornerRadius: panelCornerRadius)
                         .fill(LinearGradient(colors: [.purple.opacity(0.25), .blue.opacity(0.15)],
                                             startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -1454,7 +1525,7 @@ struct SettingsPanel: View {
             .clipShape(RoundedRectangle(cornerRadius: panelCornerRadius))
             .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
         }
-        .ignoresSafeArea(.container, edges: usesVerticalToolbar ? .all : [])
+        .ignoresSafeArea(.container, edges: usesFullScreenLayout ? .all : [])
     }
     
     var generalSettings: some View {
@@ -1690,7 +1761,11 @@ struct AnimatedMeshBackground: View {
     @AppStorage(BackgroundTheme.storageKey) private var selectedTheme = BackgroundTheme.violet.rawValue
 
     private var palette: WavePalette {
-        (BackgroundTheme(rawValue: selectedTheme) ?? .violet).pickerPalette(for: colorScheme)
+        currentTheme.pickerPalette(for: colorScheme)
+    }
+
+    private var currentTheme: BackgroundTheme {
+        BackgroundTheme(rawValue: selectedTheme) ?? .violet
     }
     
     @State private var wave1FromTop: Bool = false
@@ -1703,7 +1778,7 @@ struct AnimatedMeshBackground: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1/20)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
-            
+
             GeometryReader { geo in
                 ZStack {
                     if colorScheme == .dark {
@@ -1803,6 +1878,8 @@ struct PickerScreen: View {
     let onBack: () -> Void
     let onOpenTimer: () -> Void
     let usesVerticalToolbar: Bool
+    let isBookMode: Bool
+    let isFullyOpenDuo: Bool
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -1811,10 +1888,15 @@ struct PickerScreen: View {
         GeometryReader { geo in
             let isCompactHeight = geo.size.height < 600
             let isLandscape = geo.size.width > geo.size.height
-            let pickerHeight = usesVerticalToolbar
-                ? min(max(240, geo.size.height * (isCompactHeight ? 0.76 : 0.82)), 560)
+            let usesExpandedLayout = horizontalSizeClass == .regular || isBookMode || isFullyOpenDuo
+            let usesBookLandscapeLayout = isBookMode && isLandscape
+            let usesAdaptiveRail = usesVerticalToolbar || usesExpandedLayout
+            let pickerHeight = usesExpandedLayout
+                ? min(max(400, geo.size.height * (isLandscape ? 0.86 : 0.82)), 780)
+                : usesVerticalToolbar
+                ? min(max(280, geo.size.height * (isCompactHeight ? 0.86 : 0.88)), 680)
                 : min(max(220, geo.size.height * (isCompactHeight ? 0.52 : 0.58)), 520)
-            let titleFont: Font = usesVerticalToolbar && isCompactHeight
+            let titleFont: Font = usesAdaptiveRail && isCompactHeight
                 ? .headline
                 : .title2.weight(.bold)
 
@@ -1839,8 +1921,9 @@ struct PickerScreen: View {
                                 .buttonStyle(GlassButtonStyle())
                         }
                         .foregroundColor(FocusSurfaceStyle.textColor(for: colorScheme))
-                        .padding(usesVerticalToolbar && isCompactHeight ? 20 : 28)
+                        .padding(usesAdaptiveRail && isCompactHeight ? 20 : 28)
                         .frame(maxWidth: .infinity)
+                        .frame(height: pickerHeight)
                         .background {
                             FocusSurfaceBackground(
                                 shape: RoundedRectangle(cornerRadius: 24, style: .continuous),
@@ -1848,14 +1931,14 @@ struct PickerScreen: View {
                             )
                         }
                         .frame(
-                            maxWidth: usesVerticalToolbar && horizontalSizeClass == .regular
-                                ? 480
+                            maxWidth: usesExpandedLayout
+                                ? 520
                                 : .infinity
                         )
                         .padding(.horizontal, 20)
                     } else {
                         // Titles above pickers
-                        HStack(spacing: 12) {
+                        HStack(spacing: usesBookLandscapeLayout ? 36 : 12) {
                             Text("Lock In Time")
                                 .font(titleFont)
                                 .modifier(ThemeHeadingStyle())
@@ -1866,11 +1949,16 @@ struct PickerScreen: View {
                                 .modifier(ThemeHeadingStyle())
                                 .frame(maxWidth: .infinity)
                         }
-                        .padding(.horizontal, usesVerticalToolbar && isLandscape ? 72 : 16)
-                        .padding(.bottom, usesVerticalToolbar && isCompactHeight ? 8 : 12)
+                        .padding(
+                            .horizontal,
+                            usesBookLandscapeLayout
+                                ? 36
+                                : (usesExpandedLayout ? 32 : (usesVerticalToolbar && isLandscape ? 72 : 16))
+                        )
+                        .padding(.bottom, usesAdaptiveRail && isCompactHeight ? 8 : 12)
                         
                         // Pickers side by side
-                        HStack(spacing: 12) {
+                        HStack(spacing: usesBookLandscapeLayout ? 36 : 12) {
                             ModernPickerCard(
                                 selection: $session.studyTime,
                                 height: pickerHeight
@@ -1881,9 +1969,14 @@ struct PickerScreen: View {
                                 height: pickerHeight
                             )
                         }
-                        .padding(.horizontal, usesVerticalToolbar && isLandscape ? 72 : 16)
+                        .padding(
+                            .horizontal,
+                            usesBookLandscapeLayout
+                                ? 36
+                                : (usesExpandedLayout ? 32 : (usesVerticalToolbar && isLandscape ? 72 : 16))
+                        )
                         
-                        if !usesVerticalToolbar {
+                        if !usesAdaptiveRail {
                             Button {
                                 withAnimation(.easeInOut(duration: 0.35)) { onOpenTimer() }
                             } label: {
@@ -1901,16 +1994,26 @@ struct PickerScreen: View {
                         }
                     }
                     
-                    Spacer(minLength: usesVerticalToolbar && isLandscape ? 70 : 0)
+                    if !usesAdaptiveRail || !isLandscape {
+                        Spacer(minLength: usesExpandedLayout ? 80 : 0)
+                    }
                 }
+                .padding(
+                    .bottom,
+                    usesAdaptiveRail && isLandscape
+                        ? (usesExpandedLayout ? 18 : 4)
+                        : 0
+                )
                 .frame(
-                    maxWidth: usesVerticalToolbar && horizontalSizeClass == .regular
-                        ? 720
+                    maxWidth: usesBookLandscapeLayout
+                        ? .infinity
+                        : usesExpandedLayout
+                        ? 900
                         : 760
                 )
                 .frame(maxWidth: .infinity)
                 
-                if !usesVerticalToolbar {
+                if !usesAdaptiveRail {
                     VStack {
                         HStack {
                             Button {
@@ -1932,7 +2035,27 @@ struct PickerScreen: View {
                     }
                 } else {
                     Group {
-                        if isLandscape {
+                        if usesExpandedLayout && isLandscape {
+                            VStack {
+                                Spacer()
+                                HStack {
+                                    Spacer()
+                                    duoPickerSideRail(isLandscape: false)
+                                }
+                            }
+                            .padding(.trailing, 18)
+                            .padding(.bottom, 18)
+                        } else if usesExpandedLayout {
+                            VStack {
+                                Spacer()
+                                HStack {
+                                    Spacer()
+                                    duoPickerSideRail(isLandscape: true)
+                                    Spacer()
+                                }
+                            }
+                            .padding(.bottom, 18)
+                        } else if isLandscape {
                             VStack {
                                 Spacer()
                                 HStack {
@@ -2233,16 +2356,20 @@ struct TimerScreen: View {
     @ObservedObject var session: PomodoroSession
     @ObservedObject var settings: AppSettings
     @ObservedObject var soundManager: FocusSoundManager
+    @ObservedObject var cameraManager: CameraManager
     let onBack: () -> Void
     let usesVerticalToolbar: Bool
     let verticalToolbarEdge: HorizontalEdge?
+    let isBookMode: Bool
+    let isFullyOpenDuo: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @StateObject private var cameraManager = CameraManager()
     @StateObject private var motionManager = MotionManager()
     @State private var showCameraPreview = false
     @State private var timelapseMessage: String?
     @State private var showTimelapseAlert = false
+    @State private var showTimelapseExitConfirmation = false
+    @State private var isSavingTimelapse = false
     @State private var showSettings = false
     @State private var showUI = true
     @State private var hideTimer: Timer?
@@ -2270,9 +2397,13 @@ struct TimerScreen: View {
         GeometryReader { geo in
             let isCompactHeight = geo.size.height < 500
             let isLandscape = geo.size.width > geo.size.height
-            let maximumTimerFontSize: CGFloat = horizontalSizeClass == .regular ? 84 : (batterySaverMode ? 90 : 70)
+            let usesExpandedLayout = horizontalSizeClass == .regular || isBookMode || isFullyOpenDuo
+            let usesAdaptiveRail = usesVerticalToolbar || usesExpandedLayout
+            let maximumTimerFontSize: CGFloat = usesExpandedLayout ? 84 : (batterySaverMode ? 90 : 70)
             let timerFontSize = min(maximumTimerFontSize, max(42, geo.size.width * 0.18))
-            let horizontalCenteringOffset: CGFloat = verticalToolbarEdge == .trailing
+            let horizontalCenteringOffset: CGFloat = usesExpandedLayout
+                ? 0
+                : verticalToolbarEdge == .trailing
                 ? 16
                 : (verticalToolbarEdge == .leading ? -16 : 0)
 
@@ -2291,77 +2422,22 @@ struct TimerScreen: View {
                     FluidFillView(progress: progress, gradient: session.isStudy ? studyGradient : restGradient, motionManager: motionManager, isAnimating: session.timerRunning)
                 }
                 
-                VStack(spacing: isCompactHeight ? 14 : 30) {
-                    if !batterySaverMode {
-                        VStack(spacing: 8) {
-                            Text(session.isStudy ? "Lock In Time" : (session.isLongBreak ? "Long Chill" : "Chill Time"))
-                                .font(.largeTitle).bold().foregroundColor(.white)
-                            if settings.longBreakEnabled {
-                                Text("Session \(session.consecutiveSessions + 1) of \(settings.sessionsUntilLongBreak)")
-                                    .font(.subheadline).foregroundColor(.white.opacity(0.7))
-                            }
+                Group {
+                    if isBookMode {
+                        bookTimerLayout(
+                            timerFontSize: timerFontSize,
+                            isCompactHeight: isCompactHeight,
+                            isLandscape: isLandscape
+                        )
+                    } else {
+                        VStack(spacing: isCompactHeight ? 14 : 30) {
+                            timerReadoutContent(timerFontSize: timerFontSize)
+                            timerControlContent(usesAdaptiveRail: usesAdaptiveRail)
                         }
-                    }
-                    
-                    Text(timeString(from: session.secondsLeft))
-                        .font(.system(size: timerFontSize, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-
-                    if showUI && !batterySaverMode {
-                        Group {
-                            if usesVerticalToolbar {
-                                duoLabeledTimerActions
-                            } else {
-                                ViewThatFits(in: .horizontal) {
-                                    fullTimerActions
-                                    compactTimerActions
-                                }
-                            }
-                        }
-                        .transition(.opacity)
-                    }
-
-                    // Quick-adjust buttons (only when timer is running, also in battery saver)
-                    if showUI && session.timerRunning {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 6) {
-                                QuickAdjustButton(seconds: -30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -30) }
-                                QuickAdjustButton(seconds: -10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -10) }
-
-                                Spacer().frame(width: 20)
-
-                                QuickAdjustButton(seconds: 10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 10) }
-                                QuickAdjustButton(seconds: 30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 30) }
-                            }
-
-                            VStack(spacing: 6) {
-                                HStack(spacing: 6) {
-                                    QuickAdjustButton(seconds: -30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -30) }
-                                    QuickAdjustButton(seconds: -10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -10) }
-                                }
-                                HStack(spacing: 6) {
-                                    QuickAdjustButton(seconds: 10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 10) }
-                                    QuickAdjustButton(seconds: 30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 30) }
-                                }
-                            }
-                        }
-                        .transition(.opacity)
-                    }
-
-                    if showUI && !batterySaverMode && soundManager.currentSound != nil && soundManager.isPlaying {
-                        HStack(spacing: 6) {
-                            Image(systemName: "speaker.wave.2.fill")
-                            Text(soundManager.currentSound?.displayName ?? "")
-                        }
-                        .font(.caption)
-                        .foregroundColor(FocusSurfaceStyle.secondaryTextColor(for: colorScheme))
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background { FocusSurfaceBackground(shape: Capsule(), role: surfaceRole) }
-                        .transition(.opacity)
+                        .frame(maxWidth: 680)
+                        .padding(.horizontal, usesAdaptiveRail ? 20 : 68)
                     }
                 }
-                .frame(maxWidth: 680)
-                .padding(.horizontal, usesVerticalToolbar ? 20 : 68)
                 .offset(x: horizontalCenteringOffset)
                 
                 if showCameraPreview && !cameraPreviewHidden && !batterySaverMode {
@@ -2372,10 +2448,32 @@ struct TimerScreen: View {
                     )
                 }
                 
-                if usesVerticalToolbar && (showUI || showSettings) {
+                if usesAdaptiveRail && (showUI || showSettings) {
                     Group {
                         if showSettings {
-                            if isLandscape {
+                            if usesExpandedLayout {
+                                if isBookMode && !isLandscape {
+                                    VStack {
+                                        Spacer()
+                                        HStack {
+                                            Spacer()
+                                            duoTimerSideRail(isLandscape: true)
+                                            Spacer()
+                                        }
+                                    }
+                                    .padding(.bottom, 18)
+                                } else {
+                                    HStack {
+                                        Spacer()
+                                        VStack {
+                                            Spacer()
+                                            duoTimerSideRail(isLandscape: false)
+                                        }
+                                        .padding(.trailing, 18)
+                                        .padding(.bottom, 18)
+                                    }
+                                }
+                            } else if isLandscape {
                                 VStack {
                                     HStack {
                                         Spacer()
@@ -2396,6 +2494,26 @@ struct TimerScreen: View {
                                     .padding(.bottom, 18)
                                 }
                             }
+                        } else if usesExpandedLayout && isLandscape {
+                            HStack {
+                                Spacer()
+                                VStack {
+                                    Spacer()
+                                    duoTimerSideRail(isLandscape: false)
+                                }
+                                .padding(.trailing, 18)
+                                .padding(.bottom, 18)
+                            }
+                        } else if usesExpandedLayout {
+                            VStack {
+                                Spacer()
+                                HStack {
+                                    Spacer()
+                                    duoTimerSideRail(isLandscape: true)
+                                    Spacer()
+                                }
+                            }
+                            .padding(.bottom, 18)
                         } else if isLandscape {
                             VStack {
                                 Spacer()
@@ -2429,7 +2547,7 @@ struct TimerScreen: View {
                             
                             VStack(spacing: 12) {
                                 Button {
-                                    withAnimation(.easeInOut(duration: 0.35)) { onBack() }
+                                    requestBackNavigation()
                                 } label: {
                                     Image(systemName: "chevron.left")
                                         .font(.system(size: 18, weight: .semibold))
@@ -2497,12 +2615,34 @@ struct TimerScreen: View {
                 }
                 
                 if showSettings && !batterySaverMode {
-                    SettingsPanel(
-                        settings: settings,
-                        soundManager: soundManager,
-                        isPresented: $showSettings,
-                        usesVerticalToolbar: usesVerticalToolbar
-                    )
+                    Group {
+                        if isBookMode && isLandscape {
+                            HStack(spacing: 0) {
+                                Color.clear
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                timerSettingsPanel(
+                                    usesFullScreenLayout: false,
+                                    showsInternalCloseButton: false
+                                )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                        } else if isBookMode {
+                            VStack(spacing: 0) {
+                                timerSettingsPanel(
+                                    usesFullScreenLayout: false,
+                                    showsInternalCloseButton: false
+                                )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                Color.clear
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                        } else {
+                            timerSettingsPanel(
+                                usesFullScreenLayout: usesVerticalToolbar && !usesExpandedLayout,
+                                showsInternalCloseButton: !usesAdaptiveRail
+                            )
+                        }
+                    }
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
                         .zIndex(10)
                 }
@@ -2515,7 +2655,7 @@ struct TimerScreen: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: 50).onEnded { value in
                 if !showSettings && value.translation.width > 50 && abs(value.translation.height) < 100 {
-                    withAnimation(.easeInOut(duration: 0.35)) { onBack() }
+                    requestBackNavigation()
                 }
             }
         )
@@ -2534,6 +2674,16 @@ struct TimerScreen: View {
         .alert("Timelapse", isPresented: $showTimelapseAlert) {
             Button("OK", role: .cancel) { }
         } message: { Text(timelapseMessage ?? "") }
+        .confirmationDialog(
+            "End Timelapse?",
+            isPresented: $showTimelapseExitConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("End & Save") { saveTimelapseAndNavigateBack() }
+            Button("Keep Recording", role: .cancel) { }
+        } message: {
+            Text("The current timelapse will end and be saved before you leave the timer screen.")
+        }
         .onChange(of: session.timerRunning) { _, running in
             if running && !batterySaverMode { motionManager.startMotionUpdates() }
             else { motionManager.stopMotionUpdates() }
@@ -2543,11 +2693,137 @@ struct TimerScreen: View {
             else if session.timerRunning { motionManager.startMotionUpdates() }
         }
         .onDisappear {
-            if cameraManager.isRecording { cameraManager.stopRecording() }
-            cameraManager.cleanup()
-            showCameraPreview = false
             hideTimer?.invalidate()
             motionManager.stopMotionUpdates()
+        }
+    }
+
+    private func timerSettingsPanel(
+        usesFullScreenLayout: Bool,
+        showsInternalCloseButton: Bool
+    ) -> some View {
+        SettingsPanel(
+            settings: settings,
+            soundManager: soundManager,
+            isPresented: $showSettings,
+            usesFullScreenLayout: usesFullScreenLayout,
+            showsInternalCloseButton: showsInternalCloseButton
+        )
+    }
+
+    @ViewBuilder
+    private func bookTimerLayout(
+        timerFontSize: CGFloat,
+        isCompactHeight: Bool,
+        isLandscape: Bool
+    ) -> some View {
+        if isLandscape {
+            HStack(spacing: 36) {
+                VStack(spacing: isCompactHeight ? 14 : 30) {
+                    timerReadoutContent(timerFontSize: timerFontSize)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                VStack(spacing: isCompactHeight ? 14 : 30) {
+                    timerControlContent(usesAdaptiveRail: true)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scaleEffect(1.16)
+            }
+            .padding(.horizontal, 36)
+        } else {
+            VStack(spacing: 36) {
+                VStack(spacing: 30) {
+                    timerReadoutContent(timerFontSize: timerFontSize)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                VStack(spacing: 30) {
+                    timerControlContent(usesAdaptiveRail: true)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scaleEffect(1.16)
+                .padding(.bottom, 64)
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+        }
+    }
+
+    @ViewBuilder
+    private func timerReadoutContent(timerFontSize: CGFloat) -> some View {
+        if !batterySaverMode {
+            VStack(spacing: 8) {
+                Text(session.isStudy ? "Lock In Time" : (session.isLongBreak ? "Long Chill" : "Chill Time"))
+                    .font(.largeTitle)
+                    .bold()
+                    .foregroundColor(.white)
+                if settings.longBreakEnabled {
+                    Text("Session \(session.consecutiveSessions + 1) of \(settings.sessionsUntilLongBreak)")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.7))
+                }
+            }
+        }
+
+        Text(timeString(from: session.secondsLeft))
+            .font(.system(size: timerFontSize, weight: .bold, design: .monospaced))
+            .foregroundColor(.white)
+    }
+
+    @ViewBuilder
+    private func timerControlContent(usesAdaptiveRail: Bool) -> some View {
+        if showUI && !batterySaverMode {
+            Group {
+                if usesAdaptiveRail {
+                    duoLabeledTimerActions
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        fullTimerActions
+                        compactTimerActions
+                    }
+                }
+            }
+            .transition(.opacity)
+        }
+
+        if showUI && session.timerRunning {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    QuickAdjustButton(seconds: -30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -30) }
+                    QuickAdjustButton(seconds: -10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -10) }
+
+                    Spacer().frame(width: 20)
+
+                    QuickAdjustButton(seconds: 10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 10) }
+                    QuickAdjustButton(seconds: 30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 30) }
+                }
+
+                VStack(spacing: 6) {
+                    HStack(spacing: 6) {
+                        QuickAdjustButton(seconds: -30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -30) }
+                        QuickAdjustButton(seconds: -10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: -10) }
+                    }
+                    HStack(spacing: 6) {
+                        QuickAdjustButton(seconds: 10, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 10) }
+                        QuickAdjustButton(seconds: 30, role: surfaceRole) { session.adjustTimerDuration(bySeconds: 30) }
+                    }
+                }
+            }
+            .transition(.opacity)
+        }
+
+        if showUI && !batterySaverMode && soundManager.currentSound != nil && soundManager.isPlaying {
+            HStack(spacing: 6) {
+                Image(systemName: "speaker.wave.2.fill")
+                Text(soundManager.currentSound?.displayName ?? "")
+            }
+            .font(.caption)
+            .foregroundColor(FocusSurfaceStyle.secondaryTextColor(for: colorScheme))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background { FocusSurfaceBackground(shape: Capsule(), role: surfaceRole) }
+            .transition(.opacity)
         }
     }
 
@@ -2667,7 +2943,7 @@ struct TimerScreen: View {
                 .accessibilityLabel("Close Settings")
             } else {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.35)) { onBack() }
+                    requestBackNavigation()
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 18, weight: .semibold))
@@ -2717,6 +2993,36 @@ struct TimerScreen: View {
             withAnimation(.easeInOut(duration: 0.3)) { showUI = false }
         }
     }
+
+    func requestBackNavigation() {
+        guard !isSavingTimelapse else { return }
+
+        if cameraManager.isRecording {
+            showTimelapseExitConfirmation = true
+            return
+        }
+
+        if !cameraManager.isFinalizingRecording {
+            cameraManager.cleanup()
+        }
+        completeBackNavigation()
+    }
+
+    func saveTimelapseAndNavigateBack() {
+        guard cameraManager.isRecording, !isSavingTimelapse else { return }
+        isSavingTimelapse = true
+        cameraManager.stopAndSave {
+            isSavingTimelapse = false
+            completeBackNavigation()
+        }
+    }
+
+    private func completeBackNavigation() {
+        showCameraPreview = false
+        hideTimer?.invalidate()
+        motionManager.stopMotionUpdates()
+        withAnimation(.easeInOut(duration: 0.35)) { onBack() }
+    }
     
     var isSimulator: Bool {
         #if targetEnvironment(simulator)
@@ -2732,22 +3038,32 @@ struct TimerScreen: View {
             showTimelapseAlert = true
             return
         }
+
+        if cameraManager.isFinalizingRecording {
+            timelapseMessage = "Your timelapse is still being saved."
+            showTimelapseAlert = true
+            return
+        }
         
         if cameraManager.isRecording {
-            cameraManager.onTimelapseComplete = { url in
+            cameraManager.onTimelapseComplete = { [weak cameraManager] url in
+                cameraManager?.cleanup()
                 timelapseMessage = url != nil ? "Timelapse saved to your photo library!" : "Could not create timelapse."
                 showTimelapseAlert = true
             }
             cameraManager.stopRecording()
             showCameraPreview = false
         } else {
-            cameraManager.requestPermission { granted in
+            cameraManager.requestPermission { [weak cameraManager] granted in
+                guard let cameraManager else { return }
                 if granted {
                     cameraManager.setupCamera()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak cameraManager] in
+                        guard let cameraManager else { return }
                         showCameraPreview = true
                         cameraManager.startRecording()
-                        cameraManager.onTimelapseComplete = { url in
+                        cameraManager.onTimelapseComplete = { [weak cameraManager] url in
+                            cameraManager?.cleanup()
                             timelapseMessage = url != nil ? "Timelapse saved!" : "Could not create timelapse."
                             showTimelapseAlert = true
                         }
@@ -2765,7 +3081,7 @@ struct TimerScreen: View {
     }
 }
 
-private struct DuoFullWidthModifier: ViewModifier {
+struct DuoFullWidthModifier: ViewModifier {
     let enabled: Bool
 
     @ViewBuilder
@@ -2784,26 +3100,104 @@ enum AppPage: Int {
     case tracker, picker, timer
 }
 
+enum DeviceHingePosture: Equatable {
+    case unavailable
+    case closed
+    case partiallyOpen
+    case fullyOpen
+}
+
+@MainActor
+final class DeviceHingeState: ObservableObject {
+    @Published var posture: DeviceHingePosture = .unavailable
+}
+
+private struct HingeStateReader: View {
+    @ObservedObject var state: DeviceHingeState
+
+    @ViewBuilder
+    var body: some View {
+        if #available(iOS 27.1, *) {
+            HingeInteractionReader(state: state)
+        } else {
+            Color.clear
+        }
+    }
+}
+
+@available(iOS 27.1, *)
+private struct HingeInteractionReader: UIViewRepresentable {
+    @ObservedObject var state: DeviceHingeState
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(state: state)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        let interaction = UIHingeInteraction { [weak state] _, update in
+            // A nil hinge means this observer is moving between hierarchies;
+            // it is not a physical posture change. Keep the last real posture
+            // until the new hierarchy supplies its hinge status.
+            guard let status = update.hinge?.status else { return }
+            switch status {
+            case .closed:
+                state?.posture = .closed
+            case .partiallyOpen:
+                state?.posture = .partiallyOpen
+            case .fullyOpen:
+                state?.posture = .fullyOpen
+            default:
+                break
+            }
+        }
+        context.coordinator.interaction = interaction
+        view.addInteraction(interaction)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) { }
+
+    final class Coordinator {
+        weak var state: DeviceHingeState?
+        var interaction: UIHingeInteraction?
+
+        init(state: DeviceHingeState) {
+            self.state = state
+        }
+    }
+}
+
 // Standard navigation containers gain a vertical toolbar on iPhone Duo's
 // outer display and on the inner display in landscape. Keep the availability
 // check here so the app continues to run on pre-iOS 27 devices.
 private struct AdaptiveNavigationContainer<Content: View>: View {
     let page: AppPage
+    let hingePosture: DeviceHingePosture
     let content: (HorizontalEdge?) -> Content
 
-    init(page: AppPage, @ViewBuilder content: @escaping (HorizontalEdge?) -> Content) {
+    init(
+        page: AppPage,
+        hingePosture: DeviceHingePosture,
+        @ViewBuilder content: @escaping (HorizontalEdge?) -> Content
+    ) {
         self.page = page
+        self.hingePosture = hingePosture
         self.content = content
     }
 
     var body: some View {
         NavigationStack {
             if #available(iOS 27.1, *) {
-                VerticalToolbarEnvironmentReader(page: page, content: content)
+                VerticalToolbarEnvironmentReader(
+                    page: page,
+                    hingePosture: hingePosture,
+                    content: content
+                )
             } else {
                 content(nil)
                     .onAppear {
-                        AppOrientationPolicy.update(for: page, usesDuoLayout: false)
+                        AppOrientationPolicy.update(for: page, usesFoldedDuoLayout: false)
                     }
             }
         }
@@ -2813,18 +3207,27 @@ private struct AdaptiveNavigationContainer<Content: View>: View {
 @available(iOS 27.1, *)
 private struct VerticalToolbarEnvironmentReader<Content: View>: View {
     @Environment(\.toolbarVerticalEdge) private var toolbarVerticalEdge
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let page: AppPage
+    let hingePosture: DeviceHingePosture
     let content: (HorizontalEdge?) -> Content
 
     var body: some View {
-        let usesDuoLayout = toolbarVerticalEdge != nil
+        let usesFoldedDuoLayout: Bool = switch hingePosture {
+        case .closed:
+            true
+        case .partiallyOpen, .fullyOpen:
+            false
+        case .unavailable:
+            toolbarVerticalEdge != nil && horizontalSizeClass != .regular
+        }
 
         content(toolbarVerticalEdge)
             .onAppear {
-                AppOrientationPolicy.update(for: page, usesDuoLayout: usesDuoLayout)
+                AppOrientationPolicy.update(for: page, usesFoldedDuoLayout: usesFoldedDuoLayout)
             }
-            .onChange(of: usesDuoLayout) { _, newValue in
-                AppOrientationPolicy.update(for: page, usesDuoLayout: newValue)
+            .onChange(of: usesFoldedDuoLayout) { _, newValue in
+                AppOrientationPolicy.update(for: page, usesFoldedDuoLayout: newValue)
             }
     }
 }
@@ -2836,6 +3239,8 @@ struct ContentView: View {
     @StateObject private var stats: StatsManager
     @StateObject private var soundManager: FocusSoundManager
     @StateObject private var session: PomodoroSession
+    @StateObject private var cameraManager = CameraManager()
+    @StateObject private var hingeState = DeviceHingeState()
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(BackgroundTheme.storageKey) private var selectedTheme = BackgroundTheme.violet.rawValue
 
@@ -2867,32 +3272,39 @@ struct ContentView: View {
                 Group {
                     switch page {
                     case .tracker:
-                        AdaptiveNavigationContainer(page: .tracker) { verticalToolbarEdge in
+                        AdaptiveNavigationContainer(page: .tracker, hingePosture: hingeState.posture) { verticalToolbarEdge in
                             TrackerView(
                                 showTimer: Binding(get: { page != .tracker }, set: { if $0 { navigate(to: .picker) } }),
                                 stats: stats,
                                 settings: settings,
-                                usesVerticalToolbar: verticalToolbarEdge != nil
+                                usesVerticalToolbar: verticalToolbarEdge != nil,
+                                isBookMode: hingeState.posture == .partiallyOpen,
+                                isFullyOpenDuo: hingeState.posture == .fullyOpen
                             )
                         }
                     case .picker:
-                        AdaptiveNavigationContainer(page: .picker) { verticalToolbarEdge in
+                        AdaptiveNavigationContainer(page: .picker, hingePosture: hingeState.posture) { verticalToolbarEdge in
                             PickerScreen(
                                 session: session,
                                 onBack: { navigate(to: .tracker) },
                                 onOpenTimer: { navigate(to: .timer) },
-                                usesVerticalToolbar: verticalToolbarEdge != nil
+                                usesVerticalToolbar: verticalToolbarEdge != nil,
+                                isBookMode: hingeState.posture == .partiallyOpen,
+                                isFullyOpenDuo: hingeState.posture == .fullyOpen
                             )
                         }
                     case .timer:
-                        AdaptiveNavigationContainer(page: .timer) { verticalToolbarEdge in
+                        AdaptiveNavigationContainer(page: .timer, hingePosture: hingeState.posture) { verticalToolbarEdge in
                             TimerScreen(
                                 session: session,
                                 settings: settings,
                                 soundManager: soundManager,
+                                cameraManager: cameraManager,
                                 onBack: { navigate(to: .picker) },
                                 usesVerticalToolbar: verticalToolbarEdge != nil,
-                                verticalToolbarEdge: verticalToolbarEdge
+                                verticalToolbarEdge: verticalToolbarEdge,
+                                isBookMode: hingeState.posture == .partiallyOpen,
+                                isFullyOpenDuo: hingeState.posture == .fullyOpen
                             )
                         }
                     }
@@ -2901,6 +3313,12 @@ struct ContentView: View {
                 .transition(.opacity)
                 .zIndex(1)
             }
+        }
+        .overlay(alignment: .topLeading) {
+            HingeStateReader(state: hingeState)
+                .frame(width: 1, height: 1)
+                .opacity(0.001)
+                .allowsHitTesting(false)
         }
         .animation(.easeInOut(duration: 0.25), value: showLogoScreen)
         .onAppear {
@@ -2913,6 +3331,13 @@ struct ContentView: View {
         }
         .onChange(of: colorScheme) { _, scheme in
             settings.applyTheme(BackgroundTheme(rawValue: selectedTheme) ?? .violet, scheme: scheme)
+        }
+        .onChange(of: hingeState.posture) { _, posture in
+            if posture == .partiallyOpen || posture == .fullyOpen {
+                AppOrientationPolicy.enterInnerDisplayMode()
+            } else if posture == .closed {
+                AppOrientationPolicy.enterFoldedMode(for: page)
+            }
         }
     }
 

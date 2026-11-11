@@ -5,8 +5,9 @@ struct HabitCardBackground: View {
     var cornerRadius: CGFloat = 16
 
     var body: some View {
-        AppGlassBackground(shape: RoundedRectangle(cornerRadius: cornerRadius),
-                           tint: tint.opacity(0.08), clear: true)
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+        AppGlassBackground(shape: shape, tint: tint.opacity(0.08), clear: true)
             .shadow(color: .black.opacity(0.1), radius: 8, y: 4)
     }
 }
@@ -118,14 +119,18 @@ struct FocusSurfaceBackground<Surface: InsettableShape>: View {
                 lineWidth: 1
             )
         }
-        .shadow(color: .black.opacity(colorScheme == .light ? 0.12 : 0.26), radius: 8, y: 4)
+        .shadow(
+            color: .black.opacity(colorScheme == .light ? 0.12 : 0.26),
+            radius: 8,
+            y: 4
+        )
         .allowsHitTesting(false)
     }
 }
 
 enum FocusSurfaceStyle {
     static func textColor(for colorScheme: ColorScheme) -> Color {
-        colorScheme == .light ? Color(red: 0.10, green: 0.12, blue: 0.17) : .white
+        return colorScheme == .light ? Color(red: 0.10, green: 0.12, blue: 0.17) : .white
     }
 
     static func secondaryTextColor(for colorScheme: ColorScheme) -> Color {
